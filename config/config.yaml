@@ -1,0 +1,34 @@
+#API配置文件
+base_url: http://127.0.0.1:3000
+
+
+#认证配置
+auth:
+  token: your_api_token
+
+
+
+
+test_data:
+  boundary_data:
+    username:
+      - "3333"
+      - "2222222222222222222"
+      - "222"
+      - "22222222222222222222"
+    password:
+      - "4444aaaa"
+      - "111111111111111aaaa"
+      - "4444aaa"
+      - "111111111111111aaaaa"
+    email:
+      - "zhangsan123@163.com"
+      - "zhangsan123@"
+      - "zhangsan123.com"
+      - "zhangsan123"
+    phone:
+      - "13312345678"
+      - "113312345678"
+      - "1312345678"
+
+

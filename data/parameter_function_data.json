@@ -1,0 +1,14 @@
+{
+  "data1" : {
+      "username" : "1111222",
+      "password" : "1111aaaaa",
+      "email" : "zhangsan123@163.com"
+  },
+  "data2" : {
+      "username": "1111222",
+      "password": "1111aaaaa",
+      "email": "zhangsan123@163.com",
+      "phone": "13312345678"
+  }
+}
+
