@@ -1,0 +1,12 @@
+Serving HTTP on :: port 8000 (http://[::]:8000/) ...
+::ffff:172.19.100.145 - - [09/Jul/2025 09:43:31] "GET /index.html HTTP/1.1" 200 -
+::ffff:172.19.100.145 - - [09/Jul/2025 09:43:31] "GET /styles.css HTTP/1.1" 200 -
+::ffff:172.19.100.145 - - [09/Jul/2025 09:43:31] "GET /app.js HTTP/1.1" 200 -
+::ffff:172.19.100.145 - - [09/Jul/2025 09:43:31] "GET /widgets/summary.json HTTP/1.1" 200 -
+::ffff:172.19.100.145 - - [09/Jul/2025 09:43:31] "GET /widgets/suites.json HTTP/1.1" 200 -
+::ffff:172.19.100.145 - - [09/Jul/2025 09:43:31] "GET /widgets/history-trend.json HTTP/1.1" 200 -
+::ffff:172.19.100.145 - - [09/Jul/2025 09:43:31] "GET /widgets/environment.json HTTP/1.1" 200 -
+::ffff:172.19.100.145 - - [09/Jul/2025 09:43:31] "GET /widgets/categories.json HTTP/1.1" 200 -
+::ffff:172.19.100.145 - - [09/Jul/2025 09:43:31] "GET /widgets/executors.json HTTP/1.1" 200 -
+
+Keyboard interrupt received, exiting.
