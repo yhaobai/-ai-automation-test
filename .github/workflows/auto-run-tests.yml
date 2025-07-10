@@ -43,13 +43,27 @@ jobs:
       
       - name: Start mock server
         run: |
+          # 关键修改：设置 PYTHONIOENCODING 环境变量
+          $env:PYTHONIOENCODING = 'utf-8'
           Start-Process python -ArgumentList "api/mock_server.py --port 3000" -NoNewWindow
           Start-Sleep -Seconds 5
         shell: pwsh
       
+      - name: Debug mock server logs
+        if: always()
+        run: |
+          # 尝试捕获 mock server 的日志（如果有）
+          if (Test-Path "mock_server.log") {
+              Write-Host "Mock server logs:"
+              Get-Content mock_server.log
+          } else {
+              Write-Host "No mock server log file found."
+          }
+        shell: pwsh
+      
       - name: Run interface automation tests
         env:
-          PYTHONIOENCODING: utf-8
+          PYTHONIOENCODING: utf-8  # 保持原有设置
         run: |
           python run_test.py --junitxml=test-results.xml
         continue-on-error: true
