@@ -9,10 +9,6 @@ import subprocess
 import socket
 from time import sleep
 import schedule
-import io
-
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 def load_config():
     """加载配置文件，适配项目中config/config.ini的路径"""
