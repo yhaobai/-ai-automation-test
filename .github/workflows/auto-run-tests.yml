@@ -23,8 +23,17 @@ jobs:
           pip install -r requirements.txt
       
       - name: Start mock server
-        run: python mock_server.py
-        background: true  # 让服务在后台运行，不阻塞后续步骤
+        run: |
+          Start-Process python -ArgumentList "mock_server.py --port 8080" -NoNewWindow
+          Start-Sleep -Seconds 5  # 等待服务启动
+        shell: pwsh  # 使用 PowerShell 语法
       
       - name: Run interface automation tests
         run: python run_test.py
+      
+      - name: Stop mock server
+        if: always()  # 无论测试成功或失败都执行
+        run: |
+          Get-Process | Where-Object {$_.ProcessName -eq "python" -and $_.MainWindowTitle -like "*mock_server.py*"} | Stop-Process -Force
+        shell: pwsh
+        continue-on-error: true  # 忽略停止失败的情况
