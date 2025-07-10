@@ -29,6 +29,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # 额外安装端口检测工具（可选，增强调试）
+          pip install psutil
       
       - name: Verify mock server file
         run: |
@@ -36,112 +38,74 @@ jobs:
               Write-Host "✅ mock_server.py found at: $(Resolve-Path api/mock_server.py)"
           } else {
               Write-Error "❌ mock_server.py not found in api directory"
-              Get-ChildItem -Recurse  # 显示整个项目结构，帮助调试
+              Get-ChildItem -Recurse
               exit 1
           }
         shell: pwsh
       
-      - name: Start mock server
+      - name: Start mock server (with log output)
         run: |
-          $env:PYTHONIOENCODING = 'utf-8'
-          # 启动 mock server 并保存进程 ID
-          $process = Start-Process python -ArgumentList "api/mock_server.py --port 3000" -PassThru -NoNewWindow
-          $env:MOCK_SERVER_PID = $process.Id
-          Write-Host "Mock server started with PID: $env:MOCK_SERVER_PID"
-          Start-Sleep -Seconds 10  # 延长等待时间，确保服务器完全启动
-        shell: pwsh
-        env:
-          PYTHONIOENCODING: utf-8
-      
-      - name: Check mock server status
-        run: |
-          # 检查 mock server 进程是否仍在运行
-          if (Get-Process -Id $env:MOCK_SERVER_PID -ErrorAction SilentlyContinue) {
-              Write-Host "✅ Mock server process is running (PID: $env:MOCK_SERVER_PID)"
+          # 关键修改：将 mock server 日志输出到文件，方便排查启动错误
+          $logPath = "mock_server.log"
+          # 用 & 直接运行（非后台）并输出日志，同时用 Start-Job 实现后台运行
+          Start-Job -ScriptBlock {
+            param($scriptPath, $logPath)
+            & python $scriptPath --port 3000 2>&1 | Out-File $logPath -Encoding utf8
+          } -ArgumentList "api/mock_server.py", $logPath
+          
+          # 等待并检测服务是否启动（最多等待 30 秒，每 2 秒检查一次）
+          $maxRetries = 15
+          $retryCount = 0
+          $portOpen = $false
+          while ($retryCount -lt $maxRetries -and -not $portOpen) {
+            Start-Sleep -Seconds 2
+            $retryCount++
+            # 检查 3000 端口是否被监听
+            $portOpen = [bool](Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)
+            Write-Host "等待 mock server 启动... 已尝试 $retryCount/$maxRetries 次"
+          }
+          
+          if (-not $portOpen) {
+            Write-Error "❌ mock server 启动失败，3000 端口未监听"
+            # 输出日志帮助排查
+            if (Test-Path $logPath) {
+              Write-Host "===== mock server 日志 ====="
+              Get-Content $logPath
+            }
+            exit 1
           } else {
-              Write-Error "❌ Mock server process exited unexpectedly"
-              exit 1
+            Write-Host "✅ mock server 已启动，3000 端口正常监听"
           }
-          
-          # 检查端口 3000 是否在监听
-          $portStatus = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
-          if ($portStatus) {
-              Write-Host "✅ Port 3000 is listening"
-          } else {
-              Write-Error "❌ Port 3000 is not being listened on"
-              exit 1
-          }
-          
-          # 尝试连接 mock server（如果有健康检查端点）
-          try {
-              $response = Invoke-WebRequest -Uri "http://localhost:3000/health" -TimeoutSec 5
-              if ($response.StatusCode -eq 200) {
-                  Write-Host "✅ Mock server responded to health check"
-              } else {
-                  Write-Error "❌ Mock server returned unexpected status code: $($response.StatusCode)"
-                  exit 1
-              }
-          } catch {
-              Write-Host "⚠️ Health check failed, but server is running. Continuing tests..."
-              Write-Host "Error: $_"
-              # 不退出，继续执行测试，可能服务器需要更多时间
-          }
-        shell: pwsh
-        continue-on-error: true  # 即使健康检查失败，也继续执行测试
-      
-      - name: Debug network configuration
-        run: |
-          Write-Host "=== Network Configuration ==="
-          ipconfig /all
-          
-          Write-Host "=== Active TCP Connections ==="
-          netstat -ano | Select-String -Pattern "3000"
-          
-          Write-Host "=== Firewall Status ==="
-          Get-NetFirewallProfile | Format-Table Name, Enabled
         shell: pwsh
       
       - name: Run interface automation tests
         env:
           PYTHONIOENCODING: utf-8
-          # 添加额外的环境变量，便于调试
-          DEBUG_MODE: "true"
-          MOCK_SERVER_URL: "http://localhost:3000"
+          # 明确告诉测试代码 mock server 地址（避免依赖默认配置差异）
+          MOCK_SERVER_URL: "http://127.0.0.1:3000"
         run: |
           python run_test.py --junitxml=test-results.xml
-        continue-on-error: true
+        # 取消 continue-on-error，让失败直接暴露问题
       
-      - name: Upload test results
+      - name: Upload test results and logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results
-          path: test-results.xml
+          name: test-results-and-logs
+          path: |
+            test-results.xml
+            mock_server.log  # 上传 mock server 日志方便调试
       
       - name: Stop mock server
         if: always()
         run: |
-          Write-Host "Stopping mock server (PID: $env:MOCK_SERVER_PID)"
-          if (Get-Process -Id $env:MOCK_SERVER_PID -ErrorAction SilentlyContinue) {
-              Stop-Process -Id $env:MOCK_SERVER_PID -Force
-              Write-Host "✅ Mock server stopped"
-          } else {
-              Write-Host "⚠️ Mock server process already exited"
-          }
-          
-          # 再次检查端口是否关闭
-          $portStatus = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
-          if ($portStatus) {
-              Write-Error "❌ Port 3000 is still being listened on after stopping"
-              # 尝试强制关闭所有监听 3000 端口的进程
-              Get-NetTCPConnection -LocalPort 3000 | ForEach-Object { 
-                  Stop-Process -Id $_.OwningProcess -Force
-              }
-          } else {
-              Write-Host "✅ Port 3000 is closed"
-          }
+          # 先停止后台 job，再杀进程（双重保险）
+          Stop-Job * -ErrorAction SilentlyContinue
+          Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | 
+          ForEach-Object { $_.OwningProcess } |
+          Get-Process |
+          Stop-Process -Force
         shell: pwsh
-        continue-on-error: true
       
       - name: Notify failure
         if: failure() && github.ref == 'refs/heads/master'
