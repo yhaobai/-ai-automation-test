@@ -24,16 +24,26 @@ jobs:
       
       - name: Start mock server
         run: |
-          Start-Process python -ArgumentList "mock_server.py --port 8080" -NoNewWindow
-          Start-Sleep -Seconds 5  # 等待服务启动
-        shell: pwsh  # 使用 PowerShell 语法
+          Start-Process python -ArgumentList "mock_server.py --port 3000" -NoNewWindow  # 改为3000
+          Start-Sleep -Seconds 5
+        shell: pwsh
+      
+      - name: Debug mock server
+        run: |
+          echo "Checking mock server on port 3000..."
+          curl -v http://localhost:3000/  # 尝试访问3000端口
+        shell: pwsh
+        continue-on-error: true  # 即使失败也继续
       
       - name: Run interface automation tests
-        run: python run_test.py
+        run: python run_test.py  # 确保run_test.py也指向3000端口
       
       - name: Stop mock server
-        if: always()  # 无论测试成功或失败都执行
+        if: always()
         run: |
-          Get-Process | Where-Object {$_.ProcessName -eq "python" -and $_.MainWindowTitle -like "*mock_server.py*"} | Stop-Process -Force
+          Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue |  # 按端口号筛选
+          ForEach-Object { $_.OwningProcess } |
+          Get-Process |
+          Stop-Process -Force
         shell: pwsh
-        continue-on-error: true  # 忽略停止失败的情况
+        continue-on-error: true
