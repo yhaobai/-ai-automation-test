@@ -30,9 +30,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
+      - name: Verify mock server file
+        run: |
+          if (Test-Path "api/mock_server.py") {
+              Write-Host "✅ mock_server.py found at: $(Resolve-Path api/mock_server.py)"
+          } else {
+              Write-Error "❌ mock_server.py not found in api directory"
+              Get-ChildItem -Recurse  # 显示整个项目结构，帮助调试
+              exit 1
+          }
+        shell: pwsh
+      
       - name: Start mock server
         run: |
-          Start-Process python -ArgumentList "mock_server.py --port 3000" -NoNewWindow
+          Start-Process python -ArgumentList "api/mock_server.py --port 3000" -NoNewWindow
           Start-Sleep -Seconds 5
         shell: pwsh
       
