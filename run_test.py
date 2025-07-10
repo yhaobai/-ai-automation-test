@@ -201,25 +201,15 @@ def get_test_summary(report_path):
 
 
 def job():
-    """定时执行的任务函数"""
-    print(f"[定时任务] 开始执行测试: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    """定时执行的任务函数（改为直接执行）"""
+    print(f"[自动化测试] 开始执行测试: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     try:
         config = load_config()
         exit_code = run_tests(config)
-        print(f"[定时任务] 测试完成，退出码: {exit_code}")
+        print(f"[自动化测试] 测试完成，退出码: {exit_code}")
     except Exception as e:
-        print(f"[定时任务] 执行异常: {e}")
-
+        print(f"[自动化测试] 执行异常: {e}")
 
 if __name__ == "__main__":
-    # 配置定时规则（示例：每天 9:00 执行）
-    schedule.every().day.at("17:48").do(job)
-
-    # 额外：支持立即执行一次（方便测试）
-    job()  # 注释此行可取消首次立即执行
-
-    # 启动调度循环（持续运行）
-    print("[定时任务] 已启动，等待执行...")
-    while True:
-        schedule.run_pending()
-        sleep(1)
+    # 直接执行测试任务（无需定时循环）
+    job()
