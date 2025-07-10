@@ -47,10 +47,11 @@ jobs:
         run: |
           # 关键修改：将 mock server 日志输出到文件，方便排查启动错误
           $logPath = "mock_server.log"
-          # 用 & 直接运行（非后台）并输出日志，同时用 Start-Job 实现后台运行
+          
+          # 关键修改：在启动命令中指定 host=0.0.0.0
           Start-Job -ScriptBlock {
             param($scriptPath, $logPath)
-            & python $scriptPath --port 3000 2>&1 | Out-File $logPath -Encoding utf8
+            & python $scriptPath --host 0.0.0.0 --port 3000 2>&1 | Out-File $logPath -Encoding utf8
           } -ArgumentList "api/mock_server.py", $logPath
           
           # 等待并检测服务是否启动（最多等待 30 秒，每 2 秒检查一次）
@@ -60,8 +61,10 @@ jobs:
           while ($retryCount -lt $maxRetries -and -not $portOpen) {
             Start-Sleep -Seconds 2
             $retryCount++
-            # 检查 3000 端口是否被监听
+            
+            # 关键修改：同时检查 0.0.0.0 和 127.0.0.1 上的端口监听情况
             $portOpen = [bool](Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)
+            
             Write-Host "等待 mock server 启动... 已尝试 $retryCount/$maxRetries 次"
           }
           
@@ -72,17 +75,26 @@ jobs:
               Write-Host "===== mock server 日志 ====="
               Get-Content $logPath
             }
+            
+            # 额外输出系统网络状态帮助诊断
+            Write-Host "===== 系统网络状态 ====="
+            netstat -ano | Select-String "3000"
+            
             exit 1
           } else {
             Write-Host "✅ mock server 已启动，3000 端口正常监听"
+            
+            # 输出服务监听详情
+            Write-Host "===== 服务监听详情 ====="
+            Get-NetTCPConnection -LocalPort 3000 | Format-List
           }
         shell: pwsh
       
       - name: Run interface automation tests
         env:
           PYTHONIOENCODING: utf-8
-          # 明确告诉测试代码 mock server 地址（避免依赖默认配置差异）
-          MOCK_SERVER_URL: "http://127.0.0.1:3000"
+          # 关键修改：使用 0.0.0.0 作为服务器地址
+          MOCK_SERVER_URL: "http://0.0.0.0:3000"
         run: |
           python run_test.py --junitxml=test-results.xml
         # 取消 continue-on-error，让失败直接暴露问题
