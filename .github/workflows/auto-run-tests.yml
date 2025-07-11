@@ -269,7 +269,7 @@ jobs:
                 "text": "#### 测试结果: ${{ job.status == 'success' && '✅ 成功' || '❌ 失败' }}\n" +
                         "- 提交作者: ${{ github.actor }}\n" +
                         "- 提交信息: ${{ github.event.head_commit.message || '无' }}\n" +
-                        "- 执行时间: ${{ format('{0:YYYY-MM-DD HH:mm:ss}', github.event.head_commit.timestamp || github.event.pull_request.updated_at) }}\n" +
+                        "- 执行时间: ${{ github.event.head_commit.timestamp }}\n" +
                         "- 查看报告: [点击访问](${{ steps.report_url.outputs.url }})"
               }
             }
