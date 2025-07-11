@@ -574,4 +574,4 @@ if __name__ == '__main__':
     print('4. 更新用户信息: PUT /api/v1/users/:user_id')
     print('5. 删除用户: DELETE /api/v1/users/:user_id')
     print('6. 管理员创建：POST /api/v1/admin/users/create')
-    app.run(port=PORT, debug=True)
+    app.run(port=PORT, debug=True, host='0.0.0.0')
