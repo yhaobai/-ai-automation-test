@@ -29,8 +29,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # 额外安装端口检测工具（可选，增强调试）
-          pip install psutil
+          # 强制安装必要依赖（防止版本兼容问题）
+          pip install Flask==2.0.1 PyJWT==2.3.0 psutil==5.9.0
       
       - name: Verify mock server file
         run: |
@@ -43,80 +43,79 @@ jobs:
           }
         shell: pwsh
       
-      - name: Start mock server (with log output)
+      - name: Check port 3000 availability
         run: |
-          # 关键修改：将 mock server 日志输出到文件，方便排查启动错误
+          $used = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
+          if ($used) {
+              Write-Error "❌ Port 3000 is in use by process: $($used.OwningProcess)"
+              exit 1
+          }
+          Write-Host "✅ Port 3000 is available"
+        shell: pwsh
+      
+      - name: Start mock server (foreground mode)
+        run: |
           $logPath = "mock_server.log"
+          # 前台启动并实时输出日志（关键：暴露启动错误）
+          Start-Process python -ArgumentList "api/mock_server.py" -NoNewWindow -RedirectStandardOutput $logPath -RedirectStandardError $logPath
           
-          # 关键修改：在启动命令中指定 host=0.0.0.0
-          Start-Job -ScriptBlock {
-            param($scriptPath, $logPath)
-            & python $scriptPath --host 0.0.0.0 --port 3000 2>&1 | Out-File $logPath -Encoding utf8
-          } -ArgumentList "api/mock_server.py", $logPath
-          
-          # 等待并检测服务是否启动（最多等待 30 秒，每 2 秒检查一次）
-          $maxRetries = 15
+          # 等待服务启动（最多60秒，每3秒检查一次）
+          $maxRetries = 20
           $retryCount = 0
           $portOpen = $false
           while ($retryCount -lt $maxRetries -and -not $portOpen) {
-            Start-Sleep -Seconds 2
-            $retryCount++
-            
-            # 关键修改：同时检查 0.0.0.0 和 127.0.0.1 上的端口监听情况
-            $portOpen = [bool](Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)
-            
-            Write-Host "等待 mock server 启动... 已尝试 $retryCount/$maxRetries 次"
+              Start-Sleep -Seconds 3
+              $retryCount++
+              $portOpen = [bool](Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)
+              Write-Host "Waiting for mock server... Attempt $retryCount/$maxRetries"
           }
           
           if (-not $portOpen) {
-            Write-Error "❌ mock server 启动失败，3000 端口未监听"
-            # 输出日志帮助排查
-            if (Test-Path $logPath) {
-              Write-Host "===== mock server 日志 ====="
-              Get-Content $logPath
-            }
-            
-            # 额外输出系统网络状态帮助诊断
-            Write-Host "===== 系统网络状态 ====="
-            netstat -ano | Select-String "3000"
-            
-            exit 1
-          } else {
-            Write-Host "✅ mock server 已启动，3000 端口正常监听"
-            
-            # 输出服务监听详情
-            Write-Host "===== 服务监听详情 ====="
-            Get-NetTCPConnection -LocalPort 3000 | Format-List
+              Write-Error "❌ Mock server failed to start"
+              Write-Host "===== Mock server logs ====="
+              Get-Content $logPath -Raw
+              exit 1
+          }
+          Write-Host "✅ Mock server is running on port 3000"
+        shell: pwsh
+      
+      - name: Validate server accessibility
+        run: |
+          # 验证 127.0.0.1 可访问（关键：替代 0.0.0.0）
+          try {
+              $response = Invoke-WebRequest -Uri "http://127.0.0.1:3000/api/v1/users/login" -Method Head -TimeoutSec 5
+              Write-Host "✅ Server is accessible via http://127.0.0.1:3000"
+          } catch {
+              Write-Error "❌ Failed to access server: $_"
+              exit 1
           }
         shell: pwsh
       
       - name: Run interface automation tests
         env:
           PYTHONIOENCODING: utf-8
-          # 关键修改：使用 0.0.0.0 作为服务器地址
-          MOCK_SERVER_URL: "http://0.0.0.0:3000"
+          # 强制使用 127.0.0.1（解决 0.0.0.0 解析问题）
+          MOCK_SERVER_URL: "http://127.0.0.1:3000"
         run: |
           python run_test.py --junitxml=test-results.xml
-        # 取消 continue-on-error，让失败直接暴露问题
       
       - name: Upload test results and logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results-and-logs
+          name: test-results
           path: |
             test-results.xml
-            mock_server.log  # 上传 mock server 日志方便调试
+            mock_server.log
       
       - name: Stop mock server
         if: always()
         run: |
-          # 先停止后台 job，再杀进程（双重保险）
-          Stop-Job * -ErrorAction SilentlyContinue
-          Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | 
-          ForEach-Object { $_.OwningProcess } |
-          Get-Process |
-          Stop-Process -Force
+          $processes = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { $_.OwningProcess }
+          if ($processes) {
+              Stop-Process -Id $processes -Force
+              Write-Host "✅ Mock server stopped"
+          }
         shell: pwsh
       
       - name: Notify failure
