@@ -7,18 +7,18 @@ on:
     
 jobs:
   run-python-tests:
-    runs-on: ubuntu-latest  # 切换为Ubuntu环境
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
       - name: Set up Python
-        uses: actions/setup-python@v5  # 升级到最新版，兼容性更好
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
-          cache: 'pip'  # 自动缓存pip依赖，加速安装
+          cache: 'pip'
 
-      - name: Update system packages (解决网络下载问题)
+      - name: Update system packages
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
@@ -27,61 +27,49 @@ jobs:
             libssl-dev \
             ca-certificates \
             openjdk-11-jre  
-          # 下载 Allure（替换为实际版本）
           wget https://github.com/allure-framework/allure2/releases/download/2.25.0/allure-2.25.0.tgz -O allure.tgz
           tar -zxvf allure.tgz -C /opt/
-          # 强制设置环境变量（关键！）
           echo "PATH=/opt/allure-2.25.0/bin:$PATH" >> $GITHUB_ENV
         shell: bash
       
       - name: Install dependencies with retries
         run: |
-          # 升级pip并配置国内镜像（解决下载慢/失败问题）
           python -m pip install --upgrade pip
           pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-          
-          # 增加重试机制，应对网络波动
           pip install --retries 5 --timeout 60 -r requirements.txt
-          
-          # 锁定兼容版本（强制覆盖可能的冲突版本）
           pip install --retries 5 --timeout 60 \
             Flask==2.0.1 \
             Werkzeug==2.0.3 \
             PyJWT==2.3.0 \
             psutil==5.9.0 \
-            allure-pytest  # 新增：Allure-Pytest适配器
-          
-          # 验证安装结果
+            allure-pytest
           echo "Installed versions:"
-          pip list | grep -E "Flask|Werkzeug|PyJWT|psutil|allure-pytest"  # 新增验证allure-pytest
+          pip list | grep -E "Flask|Werkzeug|PyJWT|psutil|allure-pytest"
         shell: bash
 
       - name: Debug Allure path
         run: |
           echo "Current PATH: $PATH"
           echo "Allure directory: /opt/allure-2.25.0/bin"
-          ls -al /opt/allure-2.25.0/bin  # 检查目录是否存在
-          which allure  # 查找 allure 命令位置
+          ls -al /opt/allure-2.25.0/bin
+          which allure
         shell: bash
 
-        
       - name: Verify Allure installation
         run: |
           echo "Checking Allure version..."
-          allure --version  # 输出 Allure 版本号，验证安装成功
+          allure --version
         shell: bash
 
-        
       - name: Verify mock server file
         run: |
           if [ -f "api/mock_server.py" ]; then
               echo "✅ mock_server.py found at: $(realpath api/mock_server.py)"
-              head -5 "api/mock_server.py"  # 显示前5行确认内容
-              # 检查服务器端口配置
+              head -5 "api/mock_server.py"
               grep "port=" "api/mock_server.py" || echo "⚠️ No port configuration found in mock_server.py"
           else
               echo "❌ mock_server.py not found"
-              find . -type f -name "mock_server.py"  # 搜索文件位置
+              find . -type f -name "mock_server.py"
               exit 1
           fi
         shell: bash
@@ -89,13 +77,11 @@ jobs:
       - name: Check and free port 3001
         run: |
           port=3001
-          # 查找占用端口的进程并杀死
           pids=$(lsof -t -i:$port || true)
           if [ -n "$pids" ]; then
               echo "⚠️ Port $port is occupied by PIDs: $pids, killing them..."
               sudo kill -9 $pids
               sleep 2
-              # 再次检查
               if lsof -i:$port; then
                   echo "❌ Failed to free port $port"
                   exit 1
@@ -115,16 +101,13 @@ jobs:
           
           echo "Starting mock server..."
           
-          # 启动服务器并记录日志
           python api/mock_server.py > "$stdout_log" 2> "$stderr_log" &
           server_pid=$!
           echo $server_pid > "mock_server.pid"
           echo "✅ Mock server started (PID: $server_pid)"
           
-          # 合并日志
           cat "$stdout_log" "$stderr_log" > "$combined_log"
           
-          # 健康检查（最多尝试30秒）
           retry_count=0
           max_retries=10
           while [ $retry_count -lt $max_retries ]; do
@@ -136,24 +119,21 @@ jobs:
                   break
               else
                   echo "❌ Server not responding yet, retrying in 3 seconds..."
-                  # 更新合并日志
                   cat "$stdout_log" "$stderr_log" > "$combined_log"
                   sleep 3
               fi
               
-              # 检查服务器是否仍在运行
               if ! ps -p $server_pid > /dev/null; then
                   echo "❌ Mock server process crashed"
-                  cat "$combined_log"  # 输出日志
+                  cat "$combined_log"
                   exit 1
               fi
           done
           
           if [ $retry_count -ge $max_retries ]; then
               echo "❌ Server failed to respond after $max_retries attempts"
-              cat "$combined_log"  # 输出日志
+              cat "$combined_log"
               
-              # 检查端口状态
               if lsof -i:3001; then
                   echo "⚠️ Port 3001 is occupied"
               else
@@ -173,9 +153,7 @@ jobs:
             -d '{"username":"admin","password":"Admin123!"}' \
             "http://localhost:3001/api/v1/users/login")
           
-          # 提取状态码（最后3位）
           status_code=${response: -3}
-          # 提取响应内容（除最后3位）
           response_body=${response%???}
           
           echo "Response code: $status_code"
@@ -200,20 +178,31 @@ jobs:
 
       - name: Check Allure results directory
         run: |
-          if [ ! -d "allure-results" ] || [ -z "$(ls -A allure-results)" ]; then
-            echo "❌ Allure results directory is empty or missing"
-            exit 1  # 若结果为空，终止流程（可选，根据需求调整）
+          # 查找最新的报告目录
+          latest_report=$(find reports -type d -name 'report_*' | sort -r | head -n 1)
+          if [ -z "$latest_report" ]; then
+              echo "❌ 找不到任何报告目录"
+              exit 1
+          fi
+          
+          result_dir="$latest_report/allure-results"
+          if [ ! -d "$result_dir" ] || [ -z "$(ls -A $result_dir)" ]; then
+              echo "❌ Allure结果目录为空或缺失: $result_dir"
+              exit 1
           else
-            echo "✅ Allure results found"
+              echo "✅ Allure结果找到: $result_dir"
+              # 保存最新报告路径供后续步骤使用
+              echo "LATEST_REPORT=$latest_report" >> $GITHUB_ENV
           fi
         shell: bash
 
-
       - name: Generate Allure report
-        run: allure generate allure-results -o allure-report --clean
+        run: |
+          # 使用前面保存的最新报告路径
+          allure generate "$LATEST_REPORT/allure-results" -o "$LATEST_REPORT/allure-report" --clean
+          echo "✅ Allure报告生成成功: $LATEST_REPORT/allure-report"
         shell: bash
 
-      
       - name: Upload test results and logs
         uses: actions/upload-artifact@v4
         if: always()
@@ -222,8 +211,8 @@ jobs:
           path: |
             test-results.xml
             mock_server_combined.log
-            allure-results/  # 新增：Allure原始结果
-            allure-report/   # 新增：生成的HTML报告
+            reports/**/allure-results/
+            reports/**/allure-report/
       
       - name: Stop mock server
         if: always()
@@ -237,7 +226,6 @@ jobs:
                   echo "ℹ️ Mock server already stopped"
               fi
           else
-              # 备用方案：通过端口查找进程
               pids=$(lsof -t -i:3001 || true)
               if [ -n "$pids" ]; then
                   sudo kill -9 $pids
