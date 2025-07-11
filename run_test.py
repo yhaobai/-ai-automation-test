@@ -49,7 +49,11 @@ def run_tests(config):
 
     # 生成Allure报告
     allure_cmd = f'allure generate {report_path} -o {report_path}/html --clean --config allure.results.encoding=utf-8'
-    os.system(allure_cmd)
+    try:
+        result = subprocess.run(allure_cmd, shell=True, check=True, text=True, capture_output=True)
+        print("Allure报告生成成功")
+    except subprocess.CalledProcessError as e:
+        print(f"Allure报告生成失败: {e.stderr}")
 
     def start_temp_server(report_html_path):
         """启动临时HTTP服务器并返回可访问的URL"""
