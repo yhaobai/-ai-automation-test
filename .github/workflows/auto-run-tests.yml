@@ -21,12 +21,17 @@ jobs:
       - name: Update system packages (解决网络下载问题)
         run: |
           sudo apt-get update -y
+          # 添加 Allure 官方软件源（关键步骤）
+          sudo apt-add-repository ppa:qameta/allure -y
+          # 再次更新源以加载新添加的仓库
+          sudo apt-get update -y
+          # 安装依赖，包含 allure
           sudo apt-get install -y --no-install-recommends \
             gcc \
             python3-dev \
             libssl-dev \
             ca-certificates \
-            allure  # 新增：安装Allure命令行工具
+            allure  # 安装 Allure 命令行工具
         shell: bash
       
       - name: Install dependencies with retries
@@ -50,7 +55,15 @@ jobs:
           echo "Installed versions:"
           pip list | grep -E "Flask|Werkzeug|PyJWT|psutil|allure-pytest"  # 新增验证allure-pytest
         shell: bash
-      
+
+
+      - name: Verify Allure installation
+        run: |
+          echo "Checking Allure version..."
+          allure --version  # 输出 Allure 版本号，验证安装成功
+        shell: bash
+
+        
       - name: Verify mock server file
         run: |
           if [ -f "api/mock_server.py" ]; then
@@ -177,7 +190,17 @@ jobs:
           python run_test.py --junitxml=test-results.xml
         shell: bash
 
-        
+      - name: Check Allure results directory
+        run: |
+          if [ ! -d "allure-results" ] || [ -z "$(ls -A allure-results)" ]; then
+            echo "❌ Allure results directory is empty or missing"
+            exit 1  # 若结果为空，终止流程（可选，根据需求调整）
+          else
+            echo "✅ Allure results found"
+          fi
+        shell: bash
+
+
       - name: Generate Allure report
         run: allure generate allure-results -o allure-report --clean
         shell: bash
