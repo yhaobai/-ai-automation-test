@@ -49,59 +49,42 @@ jobs:
       
       - name: Check port 3000 availability
         run: |
-          # 用 netstat 二次验证端口（比 Get-NetTCPConnection 更可靠）
-          netstat -ano | findstr ":3000"
-          if ($LASTEXITCODE -eq 0) {
-              Write-Error "❌ Port 3000 is in use"
+          # 使用 PowerShell 原生方法检查端口状态
+          $portInUse = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
+          if ($portInUse) {
+              Write-Error "❌ Port 3000 is already in use by PID $($portInUse.OwningProcess)"
               exit 1
+          } else {
+              Write-Host "✅ Port 3000 is available"
           }
-          Write-Host "✅ Port 3000 is available"
         shell: pwsh
       
-      - name: Start mock server (force error output)
+      - name: Start mock server (foreground mode)
         run: |
           $logPath = "mock_server_combined.log"
-          # 关键修改：直接运行脚本（不后台），实时输出所有日志
-          # 用 & 执行并捕获所有输出，确保错误不丢失
-          & python api/mock_server.py 2>&1 | Out-File $logPath -Encoding utf8
-          
-          # 启动后立即检查进程是否存活（防止启动即崩溃）
-          $pid = $LASTEXITCODE
-          if (-not $pid) {
-              Write-Error "❌ Mock server process failed to start"
-              Get-Content $logPath -Raw
-              exit 1
-          }
+          # 关键修改：直接运行脚本并捕获所有输出
+          Start-Process python -ArgumentList "api/mock_server.py" -NoNewWindow -PassThru -RedirectStandardOutput $logPath -RedirectStandardError $logPath
           
           # 等待服务启动（最多60秒，每3秒检查一次）
           $maxRetries = 20
           $retryCount = 0
           $portOpen = $false
+          
           while ($retryCount -lt $maxRetries -and -not $portOpen) {
               Start-Sleep -Seconds 3
               $retryCount++
-              # 检查端口监听
               $portOpen = [bool](Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)
               Write-Host "Waiting for mock server... Attempt $retryCount/$maxRetries"
-              
-              # 检查进程是否已崩溃
-              if (-not (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
-                  Write-Error "❌ Mock server process crashed"
-                  Get-Content $logPath -Raw
-                  exit 1
-              }
           }
           
           if (-not $portOpen) {
-              Write-Error "❌ Mock server failed to listen on port 3000"
-              Write-Host "===== Full server logs ====="
+              Write-Error "❌ Mock server failed to start"
+              Write-Host "===== Mock server logs ====="
               Get-Content $logPath -Raw
               exit 1
           }
           Write-Host "✅ Mock server is running on port 3000"
         shell: pwsh
-        # 允许此步骤超时（最多10分钟）
-        timeout-minutes: 10
       
       - name: Validate server accessibility
         run: |
@@ -115,11 +98,9 @@ jobs:
               Write-Host "✅ Server responded with status: $($response.StatusCode)"
           } catch {
               Write-Error "❌ Server access failed: $_"
-              # 输出详细错误
-              if ($_.Exception.Response) {
-                  $statusCode = $_.Exception.Response.StatusCode.Value__
-                  Write-Host "Server returned status code: $statusCode"
-              }
+              # 输出服务器日志辅助排查
+              Write-Host "===== Server Logs ====="
+              Get-Content $logPath -Raw
               exit 1
           }
         shell: pwsh
