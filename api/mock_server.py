@@ -65,7 +65,8 @@ def get_users():
 # 保存用户数据
 def save_users(users):
     try:
-         with open(USERS_FILE, 'w', encoding='utf-8') as f:
+        # 修复缩进：与函数内其他代码保持同一层级
+        with open(USERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(users, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
