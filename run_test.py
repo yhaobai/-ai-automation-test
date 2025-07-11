@@ -28,6 +28,31 @@ def load_config():
     config.read(config_path,encoding="utf-8")
     return config
 
+def generate_allure_report(report_path):
+    """生成Allure报告到指定目录"""
+    allure_results_dir = os.path.join(report_path, 'allure-results')
+    allure_report_dir = os.path.join(report_path, 'html')
+    
+    if not os.path.exists(allure_results_dir):
+        print(f"Allure结果目录不存在: {allure_results_dir}")
+        return
+    
+    try:
+        # 使用完整路径生成报告
+        subprocess.run(
+            f"allure generate {allure_results_dir} -o {allure_report_dir} --clean",
+            shell=True,
+            check=True,
+            text=True,
+            capture_output=True
+        )
+        print(f"Allure报告生成成功: {allure_report_dir}")
+        return allure_report_dir
+    except subprocess.CalledProcessError as e:
+        print(f"Allure报告生成失败: {e.stderr}")
+        return None
+
+
 
 def run_tests(config):
     """执行测试并生成报告"""
@@ -47,22 +72,35 @@ def run_tests(config):
     ]
     exit_code = pytest.main(pytest_args)
 
-    # 生成 Allure 报告
-    def generate_allure_report():
-        import subprocess
-        # 假设测试结果存放在 allure-results 目录，生成报告到 allure-report 目录
-        try:
-            subprocess.run(
-                "allure generate allure-results -o allure-report --clean",
-                shell=True,
-                check=True
-            )
-            print("Allure 报告生成成功")
-        except subprocess.CalledProcessError as e:
-            print(f"Allure 报告生成失败: {e}")
 
+def run_tests(config):
+    """执行测试并生成报告"""
+    # 创建报告目录
+    report_dir = config.get('report', 'directory', fallback='reports')
+    os.makedirs(report_dir, exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    report_path = os.path.join(report_dir, f'report_{timestamp}')
+    os.makedirs(report_path, exist_ok=True)
+
+    # 执行测试，将结果保存到report_path下的allure-results目录
+    allure_results_path = os.path.join(report_path, 'allure-results')
+    pytest_args = [
+        'tests/',
+        f'--alluredir={allure_results_path}',  # 修改为完整路径
+        '-v',
+        '-s'
+    ]
+    exit_code = pytest.main(pytest_args)
+
+    # 生成 Allure 报告
+    allure_report_dir = generate_allure_report(report_path)
+    
     def start_temp_server(report_html_path):
         """启动临时HTTP服务器并返回可访问的URL"""
+        if not os.path.exists(report_html_path):
+            print(f"报告目录不存在: {report_html_path}")
+            return None
+            
         # 获取本机局域网IP
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -81,13 +119,15 @@ def run_tests(config):
         return f"http://{local_ip}:{port}/index.html"
 
     # 生成在线访问链接
-    report_html_path = os.path.join(report_path, 'html')
-    report_url = start_temp_server(report_html_path)
-    # ==========================================================
-
-    print(f"测试报告已生成: {report_url}")
-
-
+    report_url = None
+    if allure_report_dir:
+        report_url = start_temp_server(allure_report_dir)
+        if report_url:
+            print(f"测试报告已生成: {report_url}")
+        else:
+            print("无法启动报告服务器")
+    else:
+        print("无法生成报告链接")
 
     # 发送通知
     platform = config.get('notification', 'platform', fallback='dingtalk').lower()
@@ -98,7 +138,7 @@ def run_tests(config):
     else:
         print(f"不支持的通知平台: {platform}")
 
-    return exit_code
+    return exit_code    
 
 
 def send_dingtalk_message(report_url, config, exit_code, report_path):
