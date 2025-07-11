@@ -21,17 +21,17 @@ jobs:
       - name: Update system packages (解决网络下载问题)
         run: |
           sudo apt-get update -y
-          # 添加 Allure 官方软件源（关键步骤）
-          sudo apt-add-repository ppa:qameta/allure -y
-          # 再次更新源以加载新添加的仓库
-          sudo apt-get update -y
-          # 安装依赖，包含 allure
           sudo apt-get install -y --no-install-recommends \
             gcc \
             python3-dev \
             libssl-dev \
             ca-certificates \
-            allure  # 安装 Allure 命令行工具
+            openjdk-11-jre  # Allure 依赖 Java，确保安装
+          # 手动下载 Allure 并配置
+          wget https://github.com/allure-framework/allure2/releases/download/2.25.0/allure-2.25.0.tgz -O allure.tgz
+          tar -zxvf allure.tgz -C /opt/
+          echo 'export PATH="/opt/allure-2.25.0/bin:$PATH"' >> ~/.bashrc
+          source ~/.bashrc
         shell: bash
       
       - name: Install dependencies with retries
