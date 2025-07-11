@@ -173,7 +173,7 @@ jobs:
       - name: Run interface automation tests
         env:
           PYTHONIOENCODING: utf-8
-          MOCK_SERVER_URL: "http://127.0.0.1:3000"
+          MOCK_SERVER_URL: "http://127.0.0.1:3001"
         run: |
           python run_test.py --junitxml=test-results.xml
       
