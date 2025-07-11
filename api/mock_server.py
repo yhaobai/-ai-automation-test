@@ -12,6 +12,12 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'mock_jwt_secret'
 PORT = 3000
 
+# 新增健康检查路由（放在这里）
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "ok"}), 200
+
+
 # 数据存储路径
 DATA_DIR = 'data'
 USERS_FILE = os.path.join(DATA_DIR, 'users.json')
