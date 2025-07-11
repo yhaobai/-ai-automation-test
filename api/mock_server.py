@@ -4,6 +4,9 @@ import os
 import jwt
 from datetime import datetime, timedelta
 from functools import wraps
+import sys
+# 重新配置标准输出编码为 utf-8
+sys.stdout.reconfigure(encoding='utf-8')
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'mock_jwt_secret'
