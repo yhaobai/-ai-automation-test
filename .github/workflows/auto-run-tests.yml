@@ -133,7 +133,7 @@ jobs:
       - name: Validate server accessibility
         run: |
           try {
-              $response = Invoke-WebRequest -Uri "http://localhost:3000/api/v1/users/login" `
+              $response = Invoke-WebRequest -Uri "http://127.0.0.1:3000/api/v1/users/login" `
                 -Method POST `
                 -Body '{"username":"admin","password":"Admin123!"}' `
                 -ContentType "application/json" `
