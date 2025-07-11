@@ -45,81 +45,82 @@ jobs:
           }
         shell: pwsh
       
-      - name: Start mock server (foreground mode)
+      - name: Start mock server (background mode)
         run: |
           $logPath = "mock_server_combined.log"
           $errorActionPreference = "Stop"
           
           Write-Host "Starting mock server..."
+          
           try {
-              # 直接前台运行，将输出同时写入日志文件和控制台
-              & python api/mock_server.py 2>&1 | Tee-Object -FilePath $logPath -Append | Write-Host
+              # 异步启动服务器，将输出重定向到日志文件
+              $process = Start-Process python -ArgumentList "api/mock_server.py" -PassThru -NoNewWindow -RedirectStandardOutput $logPath -RedirectStandardError $logPath
               
-              $processId = $LASTEXITCODE
-              if ($processId -ne 0) {
-                  Write-Error "❌ Mock server crashed immediately (Exit Code: $processId)"
-                  exit 1
-              }
+              # 保存进程 ID 供后续步骤使用
+              $process.Id | Out-File -FilePath "mock_server.pid" -Encoding utf8
+              Write-Host "✅ Mock server started (PID: $($process.Id))"
               
-              # 后续检查进程是否存活、端口检查等逻辑保持不变
-              # 检查进程是否存活（立即 + 循环）
-              $isAlive = $true
-              for ($i=0; $i -lt 5; $i++) {  # 前5秒每1秒检查
-                  Start-Sleep -Seconds 1
-                  $isAlive = (Get-Process -Id $processId -ErrorAction SilentlyContinue) -ne $null
-                  if (-not $isAlive) { break }
-              }
+              # 健康检查（最多尝试 30 秒）
+              $retryCount = 0
+              $maxRetries = 10
               
-              if (-not $isAlive) {
-                  Write-Error "❌ Mock server process crashed (PID: $processId)"
-                  exit 1
-              }
-              
-              # 端口检查（简化逻辑）
-              $maxRetries = 20
-              $portOpen = $false
-              for ($i=1; $i -le $maxRetries; $i++) {
-                  $portState = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
-                  $portOpen = $portState.Where({$_.State -in @("Listen", "Established")}).Count -gt 0
+              while ($retryCount -lt $maxRetries) {
+                  $retryCount++
+                  Write-Host "[$retryCount/$maxRetries] Checking server health..."
                   
-                  Write-Host "[$i/$maxRetries] Port 3000 status: $($portOpen ? "Open" : "Closed")"
-                  if ($portOpen) { break }
-                  
-                  # 检查进程是否存活
-                  if (-not (Get-Process -Id $processId)) {
-                      Write-Error "❌ Process crashed during port check"
-                      exit 1
+                  try {
+                      # 尝试访问健康检查接口
+                      $response = Invoke-WebRequest -Uri "http://localhost:3000/health" -TimeoutSec 5 -ErrorAction Stop
+                      
+                      if ($response.StatusCode -eq 200) {
+                          Write-Host "✅ Server is ready!"
+                          break
+                      }
+                  } catch {
+                      Write-Host "❌ Server not responding yet, retrying in 3 seconds..."
+                      Start-Sleep -Seconds 3
                   }
                   
-                  Start-Sleep -Seconds 3
+                  # 检查进程是否仍在运行
+                  if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+                      Write-Error "❌ Mock server process crashed"
+                      Get-Content $logPath -Raw | Write-Error
+                      exit 1
+                  }
               }
               
-              if (-not $portOpen) {
-                  Write-Error "❌ Port 3000 not open after $maxRetries attempts"
+              if ($retryCount -ge $maxRetries) {
+                  Write-Error "❌ Server failed to respond after $maxRetries attempts"
+                  Get-Content $logPath -Raw | Write-Error
                   exit 1
               }
-              
-              Write-Host "✅ Mock server is running (PID: $processId, Port: 3000)"
-              echo "MOCK_SERVER_PID=$processId" | Out-File $env:GITHUB_ENV -Encoding utf8
           } catch {
-              Write-Error "❌ Critical error: $_"
+              Write-Error "❌ Failed to start mock server: $_"
+              Get-Content $logPath -Raw | Write-Error
               exit 1
           }
         shell: pwsh
-        timeout-minutes: 10
+        timeout-minutes: 5
       
       - name: Validate server accessibility
         run: |
           try {
-              $response = Invoke-WebRequest -Uri "http://127.0.0.1:3000/api/v1/users/login" `
+              $response = Invoke-WebRequest -Uri "http://localhost:3000/api/v1/users/login" `
                 -Method POST `
                 -Body '{"username":"admin","password":"Admin123!"}' `
                 -ContentType "application/json" `
                 -TimeoutSec 10
-              Write-Host "✅ Server responded: $($response.StatusCode)"
+              
+              if ($response.StatusCode -eq 200) {
+                  Write-Host "✅ Login endpoint accessible"
+              } else {
+                  Write-Error "❌ Unexpected response: $($response.StatusCode)"
+                  $response.Content | Write-Error
+                  exit 1
+              }
           } catch {
               Write-Error "❌ Server access failed: $_"
-              Get-Content "mock_server_combined.log" -Raw
+              Get-Content "mock_server_combined.log" -Raw | Write-Error
               exit 1
           }
         shell: pwsh
@@ -143,10 +144,23 @@ jobs:
       - name: Stop mock server
         if: always()
         run: |
-          $processes = Get-NetTCPConnection -LocalPort 3000 | ForEach-Object { $_.OwningProcess }
-          if ($processes) {
-              Stop-Process -Id $processes -Force
-              Write-Host "✅ Mock server stopped"
+          if (Test-Path "mock_server.pid") {
+              $pid = Get-Content "mock_server.pid"
+              if (Get-Process -Id $pid -ErrorAction SilentlyContinue) {
+                  Stop-Process -Id $pid -Force
+                  Write-Host "✅ Mock server stopped (PID: $pid)"
+              } else {
+                  Write-Host "ℹ️ Mock server already stopped"
+              }
+          } else {
+              # 备用方案：通过端口查找进程
+              $processes = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { $_.OwningProcess }
+              if ($processes) {
+                  Stop-Process -Id $processes -Force
+                  Write-Host "✅ Mock server stopped (found via port 3000)"
+              } else {
+                  Write-Host "ℹ️ No processes found listening on port 3000"
+              }
           }
         shell: pwsh
       
