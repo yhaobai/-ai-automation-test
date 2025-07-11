@@ -29,13 +29,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # 强制安装必要依赖（防止版本兼容问题）
+          # 强制安装依赖并验证版本
           pip install Flask==2.0.1 PyJWT==2.3.0 psutil==5.9.0
+          # 输出已安装依赖（关键：确认依赖是否正确安装）
+          pip list | findstr "Flask PyJWT"
       
       - name: Verify mock server file
         run: |
           if (Test-Path "api/mock_server.py") {
               Write-Host "✅ mock_server.py found at: $(Resolve-Path api/mock_server.py)"
+              # 额外验证文件内容（防止文件损坏）
+              Get-Content "api/mock_server.py" -Head 5
           } else {
               Write-Error "❌ mock_server.py not found in api directory"
               Get-ChildItem -Recurse
@@ -45,22 +49,29 @@ jobs:
       
       - name: Check port 3000 availability
         run: |
-          $used = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
-          if ($used) {
-              Write-Error "❌ Port 3000 is in use by process: $($used.OwningProcess)"
+          # 用 netstat 二次验证端口（比 Get-NetTCPConnection 更可靠）
+          netstat -ano | findstr ":3000"
+          if ($LASTEXITCODE -eq 0) {
+              Write-Error "❌ Port 3000 is in use"
               exit 1
           }
           Write-Host "✅ Port 3000 is available"
         shell: pwsh
       
-      - name: Start mock server (foreground mode)
+      - name: Start mock server (force error output)
         run: |
-          $stdoutLog = "mock_server_stdout.log"
-          $stderrLog = "mock_server_stderr.log"
-          # 修复：分开存储标准输出和错误日志，避免冲突
-          Start-Process python -ArgumentList "api/mock_server.py" -NoNewWindow `
-            -RedirectStandardOutput $stdoutLog `
-            -RedirectStandardError $stderrLog
+          $logPath = "mock_server_combined.log"
+          # 关键修改：直接运行脚本（不后台），实时输出所有日志
+          # 用 & 执行并捕获所有输出，确保错误不丢失
+          & python api/mock_server.py 2>&1 | Out-File $logPath -Encoding utf8
+          
+          # 启动后立即检查进程是否存活（防止启动即崩溃）
+          $pid = $LASTEXITCODE
+          if (-not $pid) {
+              Write-Error "❌ Mock server process failed to start"
+              Get-Content $logPath -Raw
+              exit 1
+          }
           
           # 等待服务启动（最多60秒，每3秒检查一次）
           $maxRetries = 20
@@ -69,33 +80,46 @@ jobs:
           while ($retryCount -lt $maxRetries -and -not $portOpen) {
               Start-Sleep -Seconds 3
               $retryCount++
+              # 检查端口监听
               $portOpen = [bool](Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)
               Write-Host "Waiting for mock server... Attempt $retryCount/$maxRetries"
+              
+              # 检查进程是否已崩溃
+              if (-not (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
+                  Write-Error "❌ Mock server process crashed"
+                  Get-Content $logPath -Raw
+                  exit 1
+              }
           }
           
           if (-not $portOpen) {
-              Write-Error "❌ Mock server failed to start"
-              Write-Host "===== Standard Output Logs ====="
-              Get-Content $stdoutLog -Raw
-              Write-Host "===== Error Logs ====="
-              Get-Content $stderrLog -Raw
+              Write-Error "❌ Mock server failed to listen on port 3000"
+              Write-Host "===== Full server logs ====="
+              Get-Content $logPath -Raw
               exit 1
           }
           Write-Host "✅ Mock server is running on port 3000"
         shell: pwsh
+        # 允许此步骤超时（最多10分钟）
+        timeout-minutes: 10
       
       - name: Validate server accessibility
         run: |
-          # 验证 127.0.0.1 可访问
           try {
-              $response = Invoke-WebRequest -Uri "http://127.0.0.1:3000/api/v1/users/login" -Method Head -TimeoutSec 5
-              Write-Host "✅ Server is accessible via http://127.0.0.1:3000"
+              # 发送实际请求而非 HEAD（更贴近测试场景）
+              $response = Invoke-WebRequest -Uri "http://127.0.0.1:3000/api/v1/users/login" `
+                -Method POST `
+                -Body '{"username":"admin","password":"Admin123!"}' `
+                -ContentType "application/json" `
+                -TimeoutSec 10
+              Write-Host "✅ Server responded with status: $($response.StatusCode)"
           } catch {
-              Write-Error "❌ Failed to access server: $_"
-              # 输出服务器日志辅助排查
-              Write-Host "===== Server Logs ====="
-              Get-Content "mock_server_stdout.log" -Raw
-              Get-Content "mock_server_stderr.log" -Raw
+              Write-Error "❌ Server access failed: $_"
+              # 输出详细错误
+              if ($_.Exception.Response) {
+                  $statusCode = $_.Exception.Response.StatusCode.Value__
+                  Write-Host "Server returned status code: $statusCode"
+              }
               exit 1
           }
         shell: pwsh
@@ -114,8 +138,7 @@ jobs:
           name: test-results
           path: |
             test-results.xml
-            mock_server_stdout.log
-            mock_server_stderr.log
+            mock_server_combined.log
       
       - name: Stop mock server
         if: always()
