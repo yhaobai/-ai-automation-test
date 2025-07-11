@@ -51,29 +51,19 @@ jobs:
         shell: pwsh
         # 仅测试用，生产环境建议配置防火墙规则而非直接关闭
 
-
-      - name: Validate server accessibility
+      - name: Check port 3000
         run: |
-          try {
-              $response = Invoke-WebRequest -Uri "http://127.0.0.1:3001/api/v1/users/login" `
-                -Method POST `
-                -Body '{"username":"admin","password":"Admin123!"}' `
-                -ContentType "application/json" `
-                -TimeoutSec 10
-              
-              if ($response.StatusCode -eq 200) {
-                  Write-Host "✅ Login endpoint accessible"
-              } else {
-                  Write-Error "❌ Unexpected response: $($response.StatusCode)"
-                  $response.Content | Write-Error
-                  exit 1
-              }
-          } catch {
-              Write-Error "❌ Server access failed: $_"
-              Get-Content "mock_server_combined.log" -Raw | Write-Error
+          $port = 3000
+          $process = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
+          if ($process) {
+              Write-Error "❌ Port $port is occupied by PID: $($process.OwningProcess)"
               exit 1
+          } else {
+              Write-Host "✅ Port $port is available"
           }
-        shell: pwsh        
+        shell: pwsh
+
+   
         
       
       - name: Start mock server (background mode)
@@ -153,6 +143,29 @@ jobs:
           }
         shell: pwsh
         timeout-minutes: 5
+
+      - name: Validate server accessibility
+        run: |
+          try {
+              $response = Invoke-WebRequest -Uri "http://127.0.0.1:3001/api/v1/users/login" `
+                -Method POST `
+                -Body '{"username":"admin","password":"Admin123!"}' `
+                -ContentType "application/json" `
+                -TimeoutSec 10
+              
+              if ($response.StatusCode -eq 200) {
+                  Write-Host "✅ Login endpoint accessible"
+              } else {
+                  Write-Error "❌ Unexpected response: $($response.StatusCode)"
+                  $response.Content | Write-Error
+                  exit 1
+              }
+          } catch {
+              Write-Error "❌ Server access failed: $_"
+              Get-Content "mock_server_combined.log" -Raw | Write-Error
+              exit 1
+          }
+        shell: pwsh     
         
 
     
