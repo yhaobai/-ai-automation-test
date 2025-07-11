@@ -49,27 +49,17 @@ def run_tests(config):
 
     # 生成 Allure 报告
     def generate_allure_report():
-        allure_results_dir = 'allure-results'
-        allure_report_dir = 'allure-report'
-        
-        # 检查是否存在 Allure 结果
-        if not os.path.exists(allure_results_dir) or not os.listdir(allure_results_dir):
-            print("⚠️ No Allure results found. Skipping report generation.")
-            return
-        
+        import subprocess
+        # 假设测试结果存放在 allure-results 目录，生成报告到 allure-report 目录
         try:
-            # 调用 Allure 命令生成 HTML 报告
             subprocess.run(
-                f'allure generate {allure_results_dir} -o {allure_report_dir} --clean',
+                "allure generate allure-results -o allure-report --clean",
                 shell=True,
-                check=True,
-                text=True,
-                capture_output=True
+                check=True
             )
-            print(f"✅ Allure report generated at: file://{os.path.abspath(allure_report_dir)}/index.html")
+            print("Allure 报告生成成功")
         except subprocess.CalledProcessError as e:
-            print(f"❌ Failed to generate Allure report: {e.stderr}")
-            print(f"⚠️ Make sure Allure is installed and available in your PATH.")
+            print(f"Allure 报告生成失败: {e}")
 
     def start_temp_server(report_html_path):
         """启动临时HTTP服务器并返回可访问的URL"""
