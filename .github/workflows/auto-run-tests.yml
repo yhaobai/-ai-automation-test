@@ -44,6 +44,13 @@ jobs:
               exit 1
           }
         shell: pwsh
+
+      - name: Disable firewall (test only)
+        run: |
+          Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+        shell: pwsh
+        # 仅测试用，生产环境建议配置防火墙规则而非直接关闭
+        
       
       - name: Start mock server (background mode)
         run: |
