@@ -233,3 +233,5 @@ def job():
 if __name__ == "__main__":
     # 直接执行测试任务（无需定时循环）
     job()
+    
+    generate_allure_report()
