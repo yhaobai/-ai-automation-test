@@ -54,10 +54,10 @@ jobs:
           
           # 确保日志文件存在
           New-Item -ItemType File -Path $logPath -Force | Out-Null
-          
-          Write-Host "Starting mock server..."
+          Write-Host "Starting mock server... Logging to $logPath"
+      
           try {
-              # 启动进程并捕获详细信息
+              # 直接前台运行（不使用后台作业，确保输出实时捕获）
               $process = Start-Process -FilePath "python" `
                   -ArgumentList "api/mock_server.py" `
                   -PassThru `
@@ -67,106 +67,74 @@ jobs:
               
               $processId = $process.Id
               Write-Host "Mock server started with PID: $processId"
-              
-              # 启动后台作业监控日志（无颜色参数）
-              $logTask = Start-Job -ScriptBlock {
-                  param($stdout, $stderr, $log)
-                  
-                  # 等待文件创建
-                  while (-not (Test-Path $stdout -PathType Leaf)) { Start-Sleep -Milliseconds 100 }
-                  while (-not (Test-Path $stderr -PathType Leaf)) { Start-Sleep -Milliseconds 100 }
-                  
-                  # 合并输出流并添加时间戳
-                  $stdoutReader = New-Object System.IO.StreamReader($stdout)
-                  $stderrReader = New-Object System.IO.StreamReader($stderr)
-                  
-                  try {
-                      while (-not $stdoutReader.EndOfStream -or -not $stderrReader.EndOfStream) {
-                          if (-not $stdoutReader.EndOfStream) {
-                              $line = $stdoutReader.ReadLine()
-                              $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-                              "$timestamp [STDOUT] $line" | Out-File -FilePath $log -Append
-                              Write-Host "[$timestamp] $line"
-                          }
-                          if (-not $stderrReader.EndOfStream) {
-                              $line = $stderrReader.ReadLine()
-                              $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-                              "$timestamp [STDERR] $line" | Out-File -FilePath $log -Append
-                              Write-Host "[$timestamp] $line"
-                          }
-                          Start-Sleep -Milliseconds 100
-                      }
-                  }
-                  finally {
-                      $stdoutReader.Close()
-                      $stderrReader.Close()
-                  }
-              } -ArgumentList $stdoutPath, $stderrPath, $logPath
-              
-              # 检查进程是否启动成功
-              Start-Sleep -Seconds 2
-              if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
-                  Write-Error "❌ Mock server failed to start (进程未启动)"
-                  Get-Content $stdoutPath, $stderrPath -Raw | Write-Error
-                  throw "Mock server process not found"
+      
+              # 实时合并输出到日志（简化版，避免后台作业延迟）
+              Start-Sleep -Seconds 1  # 等待进程初始化文件
+              Get-Content $stdoutPath, $stderrPath -Wait -ErrorAction SilentlyContinue | 
+                  ForEach-Object {
+                      $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                      "$timestamp $_" | Out-File -FilePath $logPath -Append
+                      Write-Host "[$timestamp] $_"
+                  } &  # 后台运行日志采集
+      
+              # 检查进程是否存活（立即 + 循环）
+              $isAlive = $true
+              for ($i=0; $i -lt 5; $i++) {  # 前5秒每1秒检查
+                  Start-Sleep -Seconds 1
+                  $isAlive = (Get-Process -Id $processId -ErrorAction SilentlyContinue) -ne $null
+                  if (-not $isAlive) { break }
               }
-              
-              Write-Host "✅ Mock server process is running. Waiting for port 3000 to open..."
-              
-              # 等待服务监听端口
-              $maxRetries = 20
-              $retryCount = 0
-              $portOpen = $false
-              
-              while ($retryCount -lt $maxRetries -and -not $portOpen) {
-                  Start-Sleep -Seconds 3
-                  $retryCount++
-                  
-                  # 检查端口状态
-                  $portState = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
-                  $portOpen = $portState.Count -gt 0 -and ($portState.State -contains "Listen" -or $portState.State -contains "Established")
-                  
-                  Write-Host "[$(Get-Date)] Waiting for mock server... Attempt $retryCount/$maxRetries"
-                  
-                  # 检查进程是否崩溃
-                  if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
-                      Write-Error "❌ Mock server process crashed (PID: $processId)"
-                      Get-Content $stdoutPath, $stderrPath -Raw | Write-Error
-                      throw "Mock server process crashed"
-                  }
-              }
-              
-              # 最终端口检查
-              if (-not $portOpen) {
-                  Write-Error "❌ Mock server failed to listen on port 3000 after $maxRetries retries"
-                  Get-Content $logPath -Raw | Write-Error
-                  throw "Port 3000 not opened after timeout"
-              }
-              
-              Write-Host "✅ Mock server is running on port 3000"
-              
-              # 保存进程ID到环境变量，供后续步骤使用
-              echo "MOCK_SERVER_PID=$processId" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
-          }
-          catch {
-              Write-Error "❌ Failed to start mock server: $_"
-              
-              # 输出完整日志
-              if (Test-Path $logPath) {
-                  Write-Host "===== Full log ====="
+      
+              if (-not $isAlive) {
+                  Write-Error "❌ Mock server process crashed (PID: $processId)"
                   Get-Content $logPath -Raw | Write-Host
+                  throw "Process terminated unexpectedly"
               }
-              
-              # 清理资源
-              if (Get-Job -Id $logTask.Id -ErrorAction SilentlyContinue) {
-                  Stop-Job $logTask
-                  Remove-Job $logTask
+      
+              # 端口检查（简化逻辑）
+              $maxRetries = 20
+              $portOpen = $false
+              for ($i=1; $i -le $maxRetries; $i++) {
+                  $portState = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
+                  $portOpen = $portState.Where({$_.State -in @("Listen", "Established")}).Count -gt 0
+                  
+                  Write-Host "[$i/$maxRetries] Port 3000 status: $($portOpen ? "Open" : "Closed")"
+                  if ($portOpen) { break }
+      
+                  # 检查进程是否存活
+                  if (-not (Get-Process -Id $processId)) {
+                      Write-Error "❌ Process crashed during port check"
+                      Get-Content $logPath -Raw | Write-Host
+                      throw "Process terminated"
+                  }
+      
+                  Start-Sleep -Seconds 3
               }
-              
-              if (Test-Path $stdoutPath) { Remove-Item $stdoutPath -Force }
-              if (Test-Path $stderrPath) { Remove-Item $stderrPath -Force }
-              
+      
+              if (-not $portOpen) {
+                  Write-Error "❌ Port 3000 not open after $maxRetries attempts"
+                  Get-Content $logPath -Raw | Write-Host
+                  throw "Port timeout"
+              }
+      
+              Write-Host "✅ Mock server is running (PID: $processId, Port: 3000)"
+              echo "MOCK_SERVER_PID=$processId" | Out-File $env:GITHUB_ENV -Encoding utf8
+      
+          } catch {
+              Write-Error "❌ Critical error: $_"
+              # 强制输出完整日志（即使文件为空）
+              if (Test-Path $logPath) {
+                  Write-Host "===== Full Log ====="
+                  Get-Content $logPath -Raw | Write-Host
+              } else {
+                  Write-Host "===== Empty Log (process crashed before writing) ====="
+              }
               exit 1
+          } finally {
+              # 清理临时文件
+              Remove-Item -Path $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+              # 停止日志采集后台任务
+              Get-Job | Where-Object { $_.Name -like "Foreach-Object*" } | Stop-Job -ErrorAction SilentlyContinue
           }
         shell: pwsh
         timeout-minutes: 10
