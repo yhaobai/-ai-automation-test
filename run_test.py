@@ -53,71 +53,50 @@ def generate_allure_report(report_path):
         return None
 
 
+def start_temp_server(report_html_path):
+    """启动临时HTTP服务器并返回可访问的URL"""
+    if not os.path.exists(report_html_path):
+        print(f"报告目录不存在: {report_html_path}")
+        return None
+        
+    # 获取本机局域网IP
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 80))
+    local_ip = s.getsockname()[0]
+    s.close()
+
+    # 启动服务器（后台运行）
+    port = 8000
+    cmd = f"python -m http.server {port} --directory {report_html_path} > server.log 2>&1 &"
+    subprocess.Popen(cmd, shell=True)
+
+    # 等待服务器启动
+    sleep(2)
+
+    # 返回可访问的链接
+    return f"http://{local_ip}:{port}/index.html"
 
 def run_tests(config):
     """执行测试并生成报告"""
-    # 创建报告目录
-    report_dir = config.get('report', 'directory', fallback='reports')
-    os.makedirs(report_dir, exist_ok=True)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    report_path = os.path.join(report_dir, f'report_{timestamp}')
-    os.makedirs(report_path, exist_ok=True)
-
-    # 执行测试
+    # 执行测试，输出到根目录的 allure-results（与workflow匹配）
+    allure_results_path = os.path.join(os.getcwd(), 'allure-results')  # 根目录路径
+    os.makedirs(allure_results_path, exist_ok=True)  # 确保目录存在
     pytest_args = [
         'tests/',
-        f'--alluredir={allure_results_path}', 
+        f'--alluredir={allure_results_path}',  # 根目录下的 allure-results
         '-v',
         '-s'
     ]
     exit_code = pytest.main(pytest_args)
-
-
-def run_tests(config):
-    """执行测试并生成报告"""
-    # 创建报告目录
-    report_dir = config.get('report', 'directory', fallback='reports')
-    os.makedirs(report_dir, exist_ok=True)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    report_path = os.path.join(report_dir, f'report_{timestamp}')
-    os.makedirs(report_path, exist_ok=True)
-
-    # 执行测试，将结果保存到report_path下的allure-results目录
-    allure_results_path = os.path.join(report_path, 'allure-results')
-    pytest_args = [
-        'tests/',
-        f'--alluredir={allure_results_path}',  # 修改为完整路径
-        '-v',
-        '-s'
-    ]
-    exit_code = pytest.main(pytest_args)
-
-    # 生成 Allure 报告
-    allure_report_dir = generate_allure_report(report_path)
     
-    def start_temp_server(report_html_path):
-        """启动临时HTTP服务器并返回可访问的URL"""
-        if not os.path.exists(report_html_path):
-            print(f"报告目录不存在: {report_html_path}")
-            return None
-            
-        # 获取本机局域网IP
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-
-        # 启动服务器（后台运行）
-        port = 8000
-        cmd = f"python -m http.server {port} --directory {report_html_path} > server.log 2>&1 &"
-        subprocess.Popen(cmd, shell=True)
-
-        # 等待服务器启动
-        sleep(2)
-
-        # 返回可访问的链接
-        return f"http://{local_ip}:{port}/index.html"
-
+    # 生成报告（可选：仍可输出到带时间戳的目录，但结果目录已与workflow对齐）
+    report_dir = config.get('report', 'directory', fallback='reports')
+    os.makedirs(report_dir, exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    report_path = os.path.join(report_dir, f'report_{timestamp}')
+    os.makedirs(report_path, exist_ok=True)
+    allure_report_dir = generate_allure_report(report_path)  # 保持原有报告生成逻辑
+    
     # 生成在线访问链接
     report_url = None
     if allure_report_dir:
