@@ -25,7 +25,8 @@ jobs:
             gcc \
             python3-dev \
             libssl-dev \
-            ca-certificates  # 确保SSL证书正常，避免HTTPS下载失败
+            ca-certificates \
+            allure  # 新增：安装Allure命令行工具
         shell: bash
       
       - name: Install dependencies with retries
@@ -42,11 +43,12 @@ jobs:
             Flask==2.0.1 \
             Werkzeug==2.0.3 \
             PyJWT==2.3.0 \
-            psutil==5.9.0
+            psutil==5.9.0 \
+            allure-pytest  # 新增：Allure-Pytest适配器
           
           # 验证安装结果
           echo "Installed versions:"
-          pip list | grep -E "Flask|Werkzeug|PyJWT|psutil"
+          pip list | grep -E "Flask|Werkzeug|PyJWT|psutil|allure-pytest"  # 新增验证allure-pytest
         shell: bash
       
       - name: Verify mock server file
@@ -189,6 +191,8 @@ jobs:
           path: |
             test-results.xml
             mock_server_combined.log
+            allure-results/  # 新增：Allure原始结果
+            allure-report/   # 新增：生成的HTML报告
       
       - name: Stop mock server
         if: always()
