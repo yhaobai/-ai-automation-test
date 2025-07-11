@@ -142,7 +142,20 @@ jobs:
               Write-Host "✅ Port $port is available"
           }
         shell: pwsh
-      
+
+      - name: Release port 3000 (force)
+        run: |
+          # 查找占用端口的进程
+          $process = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
+          if ($process) {
+              Write-Host "Port 3000 is occupied by PID: $($process.OwningProcess)"
+              # 强制终止进程
+              Stop-Process -Id $process.OwningProcess -Force -ErrorAction SilentlyContinue
+              Write-Host "✅ Force stopped process (PID: $($process.OwningProcess))"
+          } else {
+              Write-Host "ℹ️ Port 3000 is not occupied"
+          }
+        shell: pwsh      
       
       - name: Validate server accessibility
         run: |
