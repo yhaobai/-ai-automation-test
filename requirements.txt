@@ -7,3 +7,5 @@ PyYAML==6.0.2
 Requests==2.32.4
 schedule==1.2.2
 allure-pytest
+pytest
+requests
