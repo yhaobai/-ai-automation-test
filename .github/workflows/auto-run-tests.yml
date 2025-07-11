@@ -7,175 +7,173 @@ on:
 
 jobs:
   run-python-tests:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest  # 切换为Ubuntu环境
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5  # 升级到最新版，兼容性更好
         with:
           python-version: '3.9'
-          
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          cache: 'pip'  # 自动缓存pip依赖，加速安装
       
-      - name: Install dependencies
+      - name: Update system packages (解决网络下载问题)
         run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            gcc \
+            python3-dev \
+            libssl-dev \
+            ca-certificates  # 确保SSL证书正常，避免HTTPS下载失败
+        shell: bash
+      
+      - name: Install dependencies with retries
+        run: |
+          # 升级pip并配置国内镜像（解决下载慢/失败问题）
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # 锁定兼容版本（解决 werkzeug 导入问题）
-          pip install Flask==2.0.1 Werkzeug==2.0.3 PyJWT==2.3.0 psutil==5.9.0
-          pip list | findstr "Flask Werkzeug PyJWT"
+          pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+          
+          # 增加重试机制，应对网络波动
+          pip install --retries 5 --timeout 60 -r requirements.txt
+          
+          # 锁定兼容版本（强制覆盖可能的冲突版本）
+          pip install --retries 5 --timeout 60 \
+            Flask==2.0.1 \
+            Werkzeug==2.0.3 \
+            PyJWT==2.3.0 \
+            psutil==5.9.0
+          
+          # 验证安装结果
+          echo "Installed versions:"
+          pip list | grep -E "Flask|Werkzeug|PyJWT|psutil"
+        shell: bash
       
       - name: Verify mock server file
         run: |
-          if (Test-Path "api/mock_server.py") {
-              Write-Host "✅ mock_server.py found at: $(Resolve-Path api/mock_server.py)"
-              Get-Content "api/mock_server.py" -Head 5
-          } else {
-              Write-Error "❌ mock_server.py not found"
-              Get-ChildItem -Recurse
+          if [ -f "api/mock_server.py" ]; then
+              echo "✅ mock_server.py found at: $(realpath api/mock_server.py)"
+              head -5 "api/mock_server.py"  # 显示前5行确认内容
+              # 检查服务器端口配置
+              grep "port=" "api/mock_server.py" || echo "⚠️ No port configuration found in mock_server.py"
+          else
+              echo "❌ mock_server.py not found"
+              find . -type f -name "mock_server.py"  # 搜索文件位置
               exit 1
-          }
-        shell: pwsh
+          fi
+        shell: bash
 
-      - name: Disable firewall (test only)
+      - name: Check and free port 3001
         run: |
-          Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
-        shell: pwsh
-        # 仅测试用，生产环境建议配置防火墙规则而非直接关闭
+          port=3001
+          # 查找占用端口的进程并杀死
+          pids=$(lsof -t -i:$port || true)
+          if [ -n "$pids" ]; then
+              echo "⚠️ Port $port is occupied by PIDs: $pids, killing them..."
+              sudo kill -9 $pids
+              sleep 2
+              # 再次检查
+              if lsof -i:$port; then
+                  echo "❌ Failed to free port $port"
+                  exit 1
+              else
+                  echo "✅ Port $port is now free"
+              fi
+          else
+              echo "✅ Port $port is available"
+          fi
+        shell: bash
 
-      - name: Check port 3001
-        run: |
-          $port = 3001
-          $process = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
-          if ($process) {
-              Write-Error "❌ Port $port is occupied by PID: $($process.OwningProcess)"
-              exit 1
-          } else {
-              Write-Host "✅ Port $port is available"
-          }
-        shell: pwsh
-
-   
-        
-      
       - name: Start mock server (background mode)
         run: |
-          $stdoutLogPath = "mock_server_stdout.log"
-          $stderrLogPath = "mock_server_stderr.log"
-          $combinedLogPath = "mock_server_combined.log"
-          $errorActionPreference = "Stop"
+          stdout_log="mock_server_stdout.log"
+          stderr_log="mock_server_stderr.log"
+          combined_log="mock_server_combined.log"
           
-          Write-Host "Starting mock server..."
+          echo "Starting mock server..."
           
-          try {
-              # 异步启动服务器，分别重定向标准输出和错误输出
-              $process = Start-Process python -ArgumentList "api/mock_server.py" -PassThru -NoNewWindow -RedirectStandardOutput $stdoutLogPath -RedirectStandardError $stderrLogPath
+          # 启动服务器并记录日志
+          python api/mock_server.py > "$stdout_log" 2> "$stderr_log" &
+          server_pid=$!
+          echo $server_pid > "mock_server.pid"
+          echo "✅ Mock server started (PID: $server_pid)"
+          
+          # 合并日志
+          cat "$stdout_log" "$stderr_log" > "$combined_log"
+          
+          # 健康检查（最多尝试30秒）
+          retry_count=0
+          max_retries=10
+          while [ $retry_count -lt $max_retries ]; do
+              retry_count=$((retry_count + 1))
+              echo "[$retry_count/$max_retries] Checking server health..."
               
-              # 保存进程 ID 供后续步骤使用
-              $process.Id | Out-File -FilePath "mock_server.pid" -Encoding utf8
-              Write-Host "✅ Mock server started (PID: $($process.Id))"
+              if curl -s -m 5 "http://localhost:3001/health" > /dev/null; then
+                  echo "✅ Server is ready!"
+                  break
+              else
+                  echo "❌ Server not responding yet, retrying in 3 seconds..."
+                  # 更新合并日志
+                  cat "$stdout_log" "$stderr_log" > "$combined_log"
+                  sleep 3
+              fi
               
-              # 合并日志文件（可选，便于查看）
-              Get-Content $stdoutLogPath | Out-File -FilePath $combinedLogPath -Encoding utf8
-              Get-Content $stderrLogPath | Out-File -FilePath $combinedLogPath -Encoding utf8 -Append
-              
-              # 健康检查（最多尝试 30 秒）
-              $retryCount = 0
-              $maxRetries = 10
-              
-              while ($retryCount -lt $maxRetries) {
-                  $retryCount++
-                  Write-Host "[$retryCount/$maxRetries] Checking server health..."
-                  
-                  try {
-                      # 尝试访问健康检查接口
-                      $response = Invoke-WebRequest -Uri "http://localhost:3001/health" -TimeoutSec 5 -ErrorAction Stop
-                      
-                      if ($response.StatusCode -eq 200) {
-                          Write-Host "✅ Server is ready!"
-                          break
-                      }
-                  } catch {
-                      Write-Host "❌ Server not responding yet, retrying in 3 seconds..."
-                      # 更新合并日志
-                      Get-Content $stdoutLogPath | Out-File -FilePath $combinedLogPath -Encoding utf8
-                      Get-Content $stderrLogPath | Out-File -FilePath $combinedLogPath -Encoding utf8 -Append
-                      Start-Sleep -Seconds 3
-                  }
-                  
-                  # 检查进程是否仍在运行
-                  if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
-                      Write-Error "❌ Mock server process crashed"
-                      # 输出最新日志
-                      Get-Content $combinedLogPath -Raw | Write-Error
-                      exit 1
-                  }
-              }
-              
-              if ($retryCount -ge $maxRetries) {
-                  Write-Error "❌ Server failed to respond after $maxRetries attempts"
-                  # 输出最新日志
-                  Get-Content $combinedLogPath -Raw | Write-Error
-                  
-                  # 额外诊断：检查端口占用情况
-                  $portCheck = Get-NetTCPConnection -LocalPort 3001 -ErrorAction SilentlyContinue
-                  if ($portCheck) {
-                      Write-Error "⚠️ Port 3001 is occupied by PID: $($portCheck.OwningProcess)"
-                  } else {
-                      Write-Error "⚠️ Port 3001 is not occupied, server not running as expected"
-                  }
-                  
+              # 检查服务器是否仍在运行
+              if ! ps -p $server_pid > /dev/null; then
+                  echo "❌ Mock server process crashed"
+                  cat "$combined_log"  # 输出日志
                   exit 1
-              }
-          } catch {
-              Write-Error "❌ Failed to start mock server: $_"
-              # 输出最新日志
-              Get-Content $combinedLogPath -Raw | Write-Error
+              fi
+          done
+          
+          if [ $retry_count -ge $max_retries ]; then
+              echo "❌ Server failed to respond after $max_retries attempts"
+              cat "$combined_log"  # 输出日志
+              
+              # 检查端口状态
+              if lsof -i:3001; then
+                  echo "⚠️ Port 3001 is occupied"
+              else
+                  echo "⚠️ Port 3001 is not occupied (server not running)"
+              fi
+              
               exit 1
-          }
-        shell: pwsh
+          fi
+        shell: bash
         timeout-minutes: 5
 
       - name: Validate server accessibility
         run: |
-          try {
-              $response = Invoke-WebRequest -Uri "http://127.0.0.1:3001/api/v1/users/login" `
-                -Method POST `
-                -Body '{"username":"admin","password":"Admin123!"}' `
-                -ContentType "application/json" `
-                -TimeoutSec 10
-              
-              if ($response.StatusCode -eq 200) {
-                  Write-Host "✅ Login endpoint accessible"
-              } else {
-                  Write-Error "❌ Unexpected response: $($response.StatusCode)"
-                  $response.Content | Write-Error
-                  exit 1
-              }
-          } catch {
-              Write-Error "❌ Server access failed: $_"
-              Get-Content "mock_server_combined.log" -Raw | Write-Error
+          echo "Checking login endpoint..."
+          response=$(curl -s -w "%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"username":"admin","password":"Admin123!"}' \
+            "http://localhost:3001/api/v1/users/login")
+          
+          # 提取状态码（最后3位）
+          status_code=${response: -3}
+          # 提取响应内容（除最后3位）
+          response_body=${response%???}
+          
+          echo "Response code: $status_code"
+          echo "Response body: $response_body"
+          
+          if [ "$status_code" -eq 200 ]; then
+              echo "✅ Login endpoint accessible"
+          else
+              echo "❌ Login endpoint failed with status code: $status_code"
+              cat "mock_server_combined.log"
               exit 1
-          }
-        shell: pwsh     
-        
+          fi
+        shell: bash
 
-    
-      
       - name: Run interface automation tests
         env:
           PYTHONIOENCODING: utf-8
-          MOCK_SERVER_URL: "http://127.0.0.1:3001"
+          MOCK_SERVER_URL: "http://localhost:3001"
         run: |
           python run_test.py --junitxml=test-results.xml
+        shell: bash
       
       - name: Upload test results and logs
         uses: actions/upload-artifact@v4
@@ -189,25 +187,25 @@ jobs:
       - name: Stop mock server
         if: always()
         run: |
-          if (Test-Path "mock_server.pid") {
-              $pid = Get-Content "mock_server.pid"
-              if (Get-Process -Id $pid -ErrorAction SilentlyContinue) {
-                  Stop-Process -Id $pid -Force
-                  Write-Host "✅ Mock server stopped (PID: $pid)"
-              } else {
-                  Write-Host "ℹ️ Mock server already stopped"
-              }
-          } else {
+          if [ -f "mock_server.pid" ]; then
+              server_pid=$(cat "mock_server.pid")
+              if ps -p $server_pid > /dev/null; then
+                  kill -9 $server_pid
+                  echo "✅ Mock server stopped (PID: $server_pid)"
+              else
+                  echo "ℹ️ Mock server already stopped"
+              fi
+          else
               # 备用方案：通过端口查找进程
-              $processes = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { $_.OwningProcess }
-              if ($processes) {
-                  Stop-Process -Id $processes -Force
-                  Write-Host "✅ Mock server stopped (found via port 3000)"
-              } else {
-                  Write-Host "ℹ️ No processes found listening on port 3000"
-              }
-          }
-        shell: pwsh
+              pids=$(lsof -t -i:3001 || true)
+              if [ -n "$pids" ]; then
+                  sudo kill -9 $pids
+                  echo "✅ Mock server stopped (found via port 3001)"
+              else
+                  echo "ℹ️ No processes found listening on port 3001"
+              fi
+          fi
+        shell: bash
       
       - name: Notify failure
         if: failure() && github.ref == 'refs/heads/master'
