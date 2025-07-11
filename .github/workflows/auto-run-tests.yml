@@ -4,6 +4,8 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+permissions:
+  contents: write  # 赋予工作流写权限，解决部署权限问题
     
 jobs:
   run-python-tests:
@@ -11,6 +13,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 拉取完整历史，避免部署时冲突
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -178,7 +182,6 @@ jobs:
 
       - name: Check Allure results directory
         run: |
-          # 查找最新的报告目录
           latest_report=$(find reports -type d -name 'report_*' | sort -r | head -n 1)
           if [ -z "$latest_report" ]; then
               echo "❌ 找不到任何报告目录"
@@ -191,17 +194,14 @@ jobs:
               exit 1
           else
               echo "✅ Allure结果找到: $result_dir"
-              # 保存最新报告路径供后续步骤使用
               echo "LATEST_REPORT=$latest_report" >> $GITHUB_ENV
           fi
         shell: bash
 
       - name: Generate Allure report
         run: |
-          # 使用前面保存的最新报告路径
           allure generate "$LATEST_REPORT/allure-results" -o "$LATEST_REPORT/allure-report" --clean
           echo "✅ Allure报告生成成功: $LATEST_REPORT/allure-report"
-          # 复制报告到根目录public文件夹（方便GitHub Pages部署）
           mkdir -p ./public
           cp -r "$LATEST_REPORT/allure-report"/* ./public/
         shell: bash
@@ -213,11 +213,12 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           force_orphan: true
+          user_name: 'github-actions[bot]'  # 显式指定用户名
+          user_email: 'github-actions[bot]@users.noreply.github.com'  # 显式指定邮箱
 
       - name: Generate public report URL
         id: report_url
         run: |
-          # 生成GitHub Pages公网访问链接
           echo "::set-output name=url::https://${{ github.repository_owner }}.github.io/${{ github.repository }}/index.html"
         shell: bash
 
@@ -267,8 +268,8 @@ jobs:
                 "title": "📊 自动化测试报告",
                 "text": "#### 测试结果: ${{ job.status == 'success' && '✅ 成功' || '❌ 失败' }}\n" +
                         "- 提交作者: ${{ github.actor }}\n" +
-                        "- 提交信息: ${{ github.event.head_commit.message }}\n" +
-                        "- 执行时间: ${{ format('{0:YYYY-MM-DD HH:mm:ss}', github.event.head_commit.timestamp) }}\n" +
+                        "- 提交信息: ${{ github.event.head_commit.message || '无' }}\n" +
+                        "- 执行时间: ${{ format('{0:YYYY-MM-DD HH:mm:ss}', github.event.head_commit.timestamp || github.event.pull_request.updated_at) }}\n" +
                         "- 查看报告: [点击访问](${{ steps.report_url.outputs.url }})"
               }
             }
