@@ -10,7 +10,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'mock_jwt_secret'
-PORT = 3000
+PORT = 3001
 
 # 新增健康检查路由（放在这里）
 @app.route('/health')
