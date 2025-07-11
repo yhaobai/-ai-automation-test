@@ -50,6 +50,30 @@ jobs:
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
         shell: pwsh
         # 仅测试用，生产环境建议配置防火墙规则而非直接关闭
+
+
+      - name: Validate server accessibility
+        run: |
+          try {
+              $response = Invoke-WebRequest -Uri "http://127.0.0.1:3001/api/v1/users/login" `
+                -Method POST `
+                -Body '{"username":"admin","password":"Admin123!"}' `
+                -ContentType "application/json" `
+                -TimeoutSec 10
+              
+              if ($response.StatusCode -eq 200) {
+                  Write-Host "✅ Login endpoint accessible"
+              } else {
+                  Write-Error "❌ Unexpected response: $($response.StatusCode)"
+                  $response.Content | Write-Error
+                  exit 1
+              }
+          } catch {
+              Write-Error "❌ Server access failed: $_"
+              Get-Content "mock_server_combined.log" -Raw | Write-Error
+              exit 1
+          }
+        shell: pwsh        
         
       
       - name: Start mock server (background mode)
@@ -132,29 +156,6 @@ jobs:
         
 
     
-      
-      - name: Validate server accessibility
-        run: |
-          try {
-              $response = Invoke-WebRequest -Uri "http://127.0.0.1:3001/api/v1/users/login" `
-                -Method POST `
-                -Body '{"username":"admin","password":"Admin123!"}' `
-                -ContentType "application/json" `
-                -TimeoutSec 10
-              
-              if ($response.StatusCode -eq 200) {
-                  Write-Host "✅ Login endpoint accessible"
-              } else {
-                  Write-Error "❌ Unexpected response: $($response.StatusCode)"
-                  $response.Content | Write-Error
-                  exit 1
-              }
-          } catch {
-              Write-Error "❌ Server access failed: $_"
-              Get-Content "mock_server_combined.log" -Raw | Write-Error
-              exit 1
-          }
-        shell: pwsh
       
       - name: Run interface automation tests
         env:
