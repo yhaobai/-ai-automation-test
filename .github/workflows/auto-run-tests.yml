@@ -55,9 +55,12 @@ jobs:
       
       - name: Start mock server (foreground mode)
         run: |
-          $logPath = "mock_server.log"
-          # 前台启动并实时输出日志（关键：暴露启动错误）
-          Start-Process python -ArgumentList "api/mock_server.py" -NoNewWindow -RedirectStandardOutput $logPath -RedirectStandardError $logPath
+          $stdoutLog = "mock_server_stdout.log"
+          $stderrLog = "mock_server_stderr.log"
+          # 修复：分开存储标准输出和错误日志，避免冲突
+          Start-Process python -ArgumentList "api/mock_server.py" -NoNewWindow `
+            -RedirectStandardOutput $stdoutLog `
+            -RedirectStandardError $stderrLog
           
           # 等待服务启动（最多60秒，每3秒检查一次）
           $maxRetries = 20
@@ -72,8 +75,10 @@ jobs:
           
           if (-not $portOpen) {
               Write-Error "❌ Mock server failed to start"
-              Write-Host "===== Mock server logs ====="
-              Get-Content $logPath -Raw
+              Write-Host "===== Standard Output Logs ====="
+              Get-Content $stdoutLog -Raw
+              Write-Host "===== Error Logs ====="
+              Get-Content $stderrLog -Raw
               exit 1
           }
           Write-Host "✅ Mock server is running on port 3000"
@@ -81,12 +86,16 @@ jobs:
       
       - name: Validate server accessibility
         run: |
-          # 验证 127.0.0.1 可访问（关键：替代 0.0.0.0）
+          # 验证 127.0.0.1 可访问
           try {
               $response = Invoke-WebRequest -Uri "http://127.0.0.1:3000/api/v1/users/login" -Method Head -TimeoutSec 5
               Write-Host "✅ Server is accessible via http://127.0.0.1:3000"
           } catch {
               Write-Error "❌ Failed to access server: $_"
+              # 输出服务器日志辅助排查
+              Write-Host "===== Server Logs ====="
+              Get-Content "mock_server_stdout.log" -Raw
+              Get-Content "mock_server_stderr.log" -Raw
               exit 1
           }
         shell: pwsh
@@ -94,7 +103,6 @@ jobs:
       - name: Run interface automation tests
         env:
           PYTHONIOENCODING: utf-8
-          # 强制使用 127.0.0.1（解决 0.0.0.0 解析问题）
           MOCK_SERVER_URL: "http://127.0.0.1:3000"
         run: |
           python run_test.py --junitxml=test-results.xml
@@ -106,7 +114,8 @@ jobs:
           name: test-results
           path: |
             test-results.xml
-            mock_server.log
+            mock_server_stdout.log
+            mock_server_stderr.log
       
       - name: Stop mock server
         if: always()
