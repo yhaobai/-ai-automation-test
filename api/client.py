@@ -4,7 +4,7 @@ from utils.loader import YamlLoader
 class APIClient:
     def __init__(self):
         self.config = YamlLoader.get_config()
-        self.base_url = self.config.get("base_url","http://127.0.0.1:3000")
+        self.base_url = self.config.get("base_url","http://127.0.0.1:3001")
         self.session = requests.session()  #requests.Session() 是 requests 库（Python 常用的 HTTP 请求库）提供的会话对象，它能保持请求之间的连接、Cookie 等状态。
 
 
