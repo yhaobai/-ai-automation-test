@@ -47,18 +47,24 @@ jobs:
       
       - name: Start mock server (background mode)
         run: |
-          $logPath = "mock_server_combined.log"
+          $stdoutLogPath = "mock_server_stdout.log"
+          $stderrLogPath = "mock_server_stderr.log"
+          $combinedLogPath = "mock_server_combined.log"
           $errorActionPreference = "Stop"
           
           Write-Host "Starting mock server..."
           
           try {
-              # 异步启动服务器，将输出重定向到日志文件
-              $process = Start-Process python -ArgumentList "api/mock_server.py" -PassThru -NoNewWindow -RedirectStandardOutput $logPath -RedirectStandardError $logPath
+              # 异步启动服务器，分别重定向标准输出和错误输出
+              $process = Start-Process python -ArgumentList "api/mock_server.py" -PassThru -NoNewWindow -RedirectStandardOutput $stdoutLogPath -RedirectStandardError $stderrLogPath
               
               # 保存进程 ID 供后续步骤使用
               $process.Id | Out-File -FilePath "mock_server.pid" -Encoding utf8
               Write-Host "✅ Mock server started (PID: $($process.Id))"
+              
+              # 合并日志文件（可选，便于查看）
+              Get-Content $stdoutLogPath | Out-File -FilePath $combinedLogPath -Encoding utf8
+              Get-Content $stderrLogPath | Out-File -FilePath $combinedLogPath -Encoding utf8 -Append
               
               # 健康检查（最多尝试 30 秒）
               $retryCount = 0
@@ -78,25 +84,40 @@ jobs:
                       }
                   } catch {
                       Write-Host "❌ Server not responding yet, retrying in 3 seconds..."
+                      # 更新合并日志
+                      Get-Content $stdoutLogPath | Out-File -FilePath $combinedLogPath -Encoding utf8
+                      Get-Content $stderrLogPath | Out-File -FilePath $combinedLogPath -Encoding utf8 -Append
                       Start-Sleep -Seconds 3
                   }
                   
                   # 检查进程是否仍在运行
                   if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
                       Write-Error "❌ Mock server process crashed"
-                      Get-Content $logPath -Raw | Write-Error
+                      # 输出最新日志
+                      Get-Content $combinedLogPath -Raw | Write-Error
                       exit 1
                   }
               }
               
               if ($retryCount -ge $maxRetries) {
                   Write-Error "❌ Server failed to respond after $maxRetries attempts"
-                  Get-Content $logPath -Raw | Write-Error
+                  # 输出最新日志
+                  Get-Content $combinedLogPath -Raw | Write-Error
+                  
+                  # 额外诊断：检查端口占用情况
+                  $portCheck = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
+                  if ($portCheck) {
+                      Write-Error "⚠️ Port 3000 is occupied by PID: $($portCheck.OwningProcess)"
+                  } else {
+                      Write-Error "⚠️ Port 3000 is not occupied, server not running as expected"
+                  }
+                  
                   exit 1
               }
           } catch {
               Write-Error "❌ Failed to start mock server: $_"
-              Get-Content $logPath -Raw | Write-Error
+              # 输出最新日志
+              Get-Content $combinedLogPath -Raw | Write-Error
               exit 1
           }
         shell: pwsh
