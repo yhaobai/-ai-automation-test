@@ -10,6 +10,8 @@ import socket
 from time import sleep
 import logging
 import atexit
+import sys
+import zipfile
 
 # 配置日志记录
 logging.basicConfig(
@@ -51,8 +53,28 @@ def is_port_available(host, port):
         except OSError:
             return False
 
-def start_temp_server(report_html_path, config):
-    """启动临时HTTP服务器并返回可访问的URL"""
+def create_report_zip(report_html_path):
+    """创建报告目录的ZIP压缩包"""
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    zip_path = os.path.join(os.path.dirname(report_html_path), f'report_{timestamp}.zip')
+    
+    try:
+        logging.info(f"正在创建报告压缩包: {zip_path}")
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(report_html_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, os.path.dirname(report_html_path))
+                    zipf.write(file_path, arcname)
+        
+        logging.info(f"报告压缩包创建成功: {zip_path}")
+        return zip_path
+    except Exception as e:
+        logging.error(f"创建报告压缩包失败: {e}")
+        return None
+
+def start_local_server(report_html_path, config):
+    """启动本地HTTP服务器并返回可访问的URL"""
     global server_process
     
     # 获取配置中的公网地址或域名
@@ -87,7 +109,7 @@ def start_temp_server(report_html_path, config):
     
     # 启动服务器
     cmd = f"python -m http.server {port} --directory {report_html_path} > server.log 2>&1 &"
-    logging.info(f"启动临时服务器: {cmd}")
+    logging.info(f"启动本地服务器: {cmd}")
     
     try:
         server_process = subprocess.Popen(cmd, shell=True)
@@ -113,7 +135,7 @@ def start_temp_server(report_html_path, config):
         return f"http://{public_address}:{port}/index.html"
     
     except Exception as e:
-        logging.error(f"启动临时服务器失败: {e}")
+        logging.error(f"启动本地服务器失败: {e}")
         return None
 
 def cleanup():
@@ -121,7 +143,7 @@ def cleanup():
     global server_process
     if server_process:
         try:
-            logging.info("关闭临时服务器")
+            logging.info("关闭本地服务器")
             server_process.terminate()
             server_process.wait(timeout=5)
         except Exception as e:
@@ -172,34 +194,62 @@ def run_tests(config):
     else:
         logging.info(f"Allure 报告生成成功: {result.stdout}")
 
-    # 生成在线访问链接
-    report_html_path = os.path.join(report_path, 'html')
-    
     # 检查报告文件是否存在
+    report_html_path = os.path.join(report_path, 'html')
     if not os.path.exists(os.path.join(report_html_path, 'index.html')):
         logging.error(f"报告文件不存在: {report_html_path}/index.html")
         return exit_code
     
-    report_url = start_temp_server(report_html_path, config)
+    # 确定访问方式：本地服务器还是打包下载
+    access_mode = config.get('report', 'access_mode', fallback='local_server').lower()
     
-    if not report_url:
-        logging.error("无法获取有效的报告URL")
-        report_url = "报告URL不可用，请检查服务器配置"
-
-    logging.info(f"测试报告已生成: {report_url}")
-
+    if access_mode == 'local_server':
+        # 尝试启动本地服务器
+        report_url = start_local_server(report_html_path, config)
+        
+        if not report_url:
+            logging.error("无法启动本地服务器，切换到打包下载模式")
+            access_mode = 'download'
+        else:
+            logging.info(f"测试报告可通过以下链接访问: {report_url}")
+    else:
+        report_url = None
+    
+    if access_mode == 'download':
+        # 创建报告压缩包
+        zip_path = create_report_zip(report_html_path)
+        
+        if zip_path:
+            report_url = zip_path
+            logging.info(f"测试报告已打包为: {zip_path}")
+            logging.info("请将此压缩包传输到有浏览器的环境中解压查看")
+        else:
+            logging.error("报告打包失败，无法提供下载")
+            report_url = "报告生成失败，请检查日志"
+    
     # 发送通知
     platform = config.get('notification', 'platform', fallback='dingtalk').lower()
     if platform == 'dingtalk':
-        send_dingtalk_message(report_url, config, exit_code, report_path)
+        send_notification(report_url, config, exit_code, report_path, access_mode)
     elif platform == 'wechat':
-        send_wechat_message(report_url, config, exit_code, report_path)
+        send_notification(report_url, config, exit_code, report_path, access_mode)
     else:
         logging.warning(f"不支持的通知平台: {platform}")
 
     return exit_code
 
-def send_dingtalk_message(report_url, config, exit_code, report_path):
+def send_notification(report_url, config, exit_code, report_path, access_mode):
+    """根据配置的平台发送通知"""
+    platform = config.get('notification', 'platform', fallback='dingtalk').lower()
+    
+    if platform == 'dingtalk':
+        send_dingtalk_message(report_url, config, exit_code, report_path, access_mode)
+    elif platform == 'wechat':
+        send_wechat_message(report_url, config, exit_code, report_path, access_mode)
+    else:
+        logging.warning(f"不支持的通知平台: {platform}")
+
+def send_dingtalk_message(report_url, config, exit_code, report_path, access_mode):
     """发送钉钉消息通知"""
     webhook_url = config.get('dingtalk', 'webhook')
     secret = config.get('dingtalk', 'secret', fallback=None)
@@ -211,6 +261,16 @@ def send_dingtalk_message(report_url, config, exit_code, report_path):
     # 构建消息内容
     message_title = "📊 自动化测试报告"
     test_summary = get_test_summary(report_path)
+    
+    # 根据访问模式调整消息内容
+    if access_mode == 'local_server':
+        access_info = f"- **查看详情**: [点击查看测试报告]({report_url})"
+    else:
+        access_info = f"""
+- **查看方式**: 报告已打包为ZIP文件
+- **下载路径**: {report_url}
+- **操作指引**: 请将ZIP文件传输到有浏览器的环境中解压后，打开index.html查看
+"""
 
     message = {
         "msgtype": "markdown",
@@ -226,7 +286,7 @@ def send_dingtalk_message(report_url, config, exit_code, report_path):
 - **失败数量**: {test_summary.get('failed', '未知')}
 - **错误数量**: {test_summary.get('broken', '未知')}
 - **跳过数量**: {test_summary.get('skipped', '未知')}
-- **查看详情**: [点击查看测试报告]({report_url})
+{access_info}
 """
         },
         "at": {
@@ -269,7 +329,7 @@ def send_dingtalk_message(report_url, config, exit_code, report_path):
     except requests.RequestException as e:
         logging.error(f"钉钉消息发送异常: {e}")
 
-def send_wechat_message(report_url, config, exit_code, report_path):
+def send_wechat_message(report_url, config, exit_code, report_path, access_mode):
     """发送企业微信消息通知"""
     webhook_url = config.get('wechat', 'webhook')
     
@@ -278,6 +338,16 @@ def send_wechat_message(report_url, config, exit_code, report_path):
         return
 
     test_summary = get_test_summary(report_path)
+    
+    # 根据访问模式调整消息内容
+    if access_mode == 'local_server':
+        access_info = f"- **查看详情**: [点击查看测试报告]({report_url})"
+    else:
+        access_info = f"""
+- **查看方式**: 报告已打包为ZIP文件
+- **下载路径**: {report_url}
+- **操作指引**: 请将ZIP文件传输到有浏览器的环境中解压后，打开index.html查看
+"""
 
     message = {
         "msgtype": "markdown",
@@ -292,7 +362,7 @@ def send_wechat_message(report_url, config, exit_code, report_path):
 - **失败数量**: {test_summary.get('failed', '未知')}
 - **错误数量**: {test_summary.get('broken', '未知')}
 - **跳过数量**: {test_summary.get('skipped', '未知')}
-- **查看详情**: [点击查看测试报告]({report_url})
+{access_info}
 """
         }
     }
@@ -380,4 +450,4 @@ if __name__ == "__main__":
         logging.exception("执行测试时发生致命错误")
         sys.exit(1)
     finally:
-        cleanup()
+        cleanup()    
