@@ -129,6 +129,20 @@ jobs:
           }
         shell: pwsh
         timeout-minutes: 5
+        
+
+      - name: Check port 3000
+        run: |
+          $port = 3000
+          $process = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
+          if ($process) {
+              Write-Error "❌ Port $port is occupied by PID: $($process.OwningProcess)"
+              exit 1
+          } else {
+              Write-Host "✅ Port $port is available"
+          }
+        shell: pwsh
+      
       
       - name: Validate server accessibility
         run: |
