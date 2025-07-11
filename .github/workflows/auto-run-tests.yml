@@ -150,7 +150,7 @@ jobs:
               echo "MOCK_SERVER_PID=$processId" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
           }
           catch {
-              Write-Error "❌ Failed to start mock server: $_" -ForegroundColor Red
+              Write-Error "❌ Failed to start mock server: $_"
               
               # 输出完整日志
               if (Test-Path $logPath) {
