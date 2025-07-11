@@ -47,13 +47,29 @@ def run_tests(config):
     ]
     exit_code = pytest.main(pytest_args)
 
-    # 生成Allure报告
-    allure_cmd = f'allure generate {report_path} -o {report_path}/html --clean --config allure.results.encoding=utf-8'
-    try:
-        result = subprocess.run(allure_cmd, shell=True, check=True, text=True, capture_output=True)
-        print("Allure报告生成成功")
-    except subprocess.CalledProcessError as e:
-        print(f"Allure报告生成失败: {e.stderr}")
+    # 生成 Allure 报告
+    def generate_allure_report():
+        allure_results_dir = 'allure-results'
+        allure_report_dir = 'allure-report'
+        
+        # 检查是否存在 Allure 结果
+        if not os.path.exists(allure_results_dir) or not os.listdir(allure_results_dir):
+            print("⚠️ No Allure results found. Skipping report generation.")
+            return
+        
+        try:
+            # 调用 Allure 命令生成 HTML 报告
+            subprocess.run(
+                f'allure generate {allure_results_dir} -o {allure_report_dir} --clean',
+                shell=True,
+                check=True,
+                text=True,
+                capture_output=True
+            )
+            print(f"✅ Allure report generated at: file://{os.path.abspath(allure_report_dir)}/index.html")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to generate Allure report: {e.stderr}")
+            print(f"⚠️ Make sure Allure is installed and available in your PATH.")
 
     def start_temp_server(report_html_path):
         """启动临时HTTP服务器并返回可访问的URL"""
