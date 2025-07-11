@@ -13,9 +13,8 @@ PORT = 3000
 DATA_DIR = 'data'
 USERS_FILE = os.path.join(DATA_DIR, 'users.json')
 
-# 确保数据目录存在
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
+# 确保数据目录存在（提前执行，避免初始化数据时目录不存在）
+os.makedirs(DATA_DIR, exist_ok=True)
 
 
 # 初始化数据
@@ -48,9 +47,10 @@ def init_data():
                 "status": 1
             }
         ]
-        # 修复缩进：与 initial_users 保持同一层级（缩进量相同）
+        # 修复缩进：与 initial_users 同层级
         with open(USERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(initial_users, f, indent=2, ensure_ascii=False)
+
 
 # 读取用户数据
 def get_users():
@@ -65,7 +65,7 @@ def get_users():
 # 保存用户数据
 def save_users(users):
     try:
-        # 修复缩进：与函数内其他代码保持同一层级
+        # 修复缩进：与 try 块内其他代码同层级
         with open(USERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(users, f, indent=2, ensure_ascii=False)
         return True
@@ -131,10 +131,10 @@ def token_required(f):
                 'message': '令牌无效'
             }), 401
 
+        # 修复缩进：与 decorated 函数内其他代码同层级
         return f(decoded, *args, **kwargs)
 
     return decorated
-
 
 # 1. 用户注册接口
 @app.post('/api/v1/users/register')
@@ -161,7 +161,7 @@ def register():
             'message': '邮箱已注册'
         }), 400
 
-    # 验证密码格式（至少8位，包含字母和数字）
+    # 验证密码格式
     if not (8 <= len(password) <= 20 and any(c.isalpha() for c in password) and any(c.isdigit() for c in password)):
         return jsonify({
             'code': 40003,
@@ -182,7 +182,7 @@ def register():
     new_user = {
         'user_id': new_user_id,
         'username': username,
-        'password': password,  # 实际应用中应该加密存储
+        'password': password,
         'email': email,
         'phone': phone or '',
         'avatar': f'http://example.com/avatar/{new_user_id}.jpg',
@@ -209,28 +209,18 @@ def register():
     }), 200
 
 
-# 2. 用户登录接口（对应文档第2节）
+# 2. 用户登录接口
 @app.post('/api/v1/users/login')
 def login():
-    """
-    用户登录获取token接口
-    文档要求：
-    - 接口URL: POST /api/v1/users/login
-    - 必填参数: username, password
-    - 可选参数: remember_me (默认false)
-    - 成功响应: code=200, 包含token和user_info
-    - 错误码: 40005(用户名/密码错误), 40006(账号禁用)
-    """
     print("接收到登录请求")
     try:
-        # 解析请求参数
         data = request.get_json()
         username = data.get('username')
         password = data.get('password')
-        remember_me = data.get('remember_me', False)  # 文档要求：可选，默认false
+        remember_me = data.get('remember_me', False)
         print(f"登录参数: username={username}")
 
-        # 读取用户数据（增加文件操作异常处理）
+        # 读取用户数据
         try:
             users = get_users()
         except Exception as e:
@@ -241,7 +231,7 @@ def login():
                 'error_detail': str(e)
             }), 500
 
-        # 查找用户（文档错误码40005）
+        # 查找用户
         user = next((u for u in users if u['username'] == username), None)
         if not user:
             print(f"登录失败: 用户名 {username} 不存在")
@@ -250,7 +240,7 @@ def login():
                 'message': '用户名或密码错误'
             }), 400
 
-        # 验证密码（文档错误码40005）
+        # 验证密码
         if user['password'] != password:
             print(f"登录失败: 密码错误 for user: {username}")
             return jsonify({
@@ -258,7 +248,7 @@ def login():
                 'message': '用户名或密码错误'
             }), 400
 
-        # 检查账号状态（文档错误码40006）
+        # 检查账号状态
         if user['status'] != 1:
             print(f"登录失败: 账号 {username} 已被禁用")
             return jsonify({
@@ -266,7 +256,7 @@ def login():
                 'message': '账号已被禁用'
             }), 400
 
-        # 生成令牌（符合文档响应结构）
+        # 生成令牌
         try:
             token = generate_token(user)
         except jwt.exceptions.PyJWTError as e:
@@ -283,8 +273,8 @@ def login():
             'message': '登录成功',
             'data': {
                 'token': token,
-                'token_type': 'Bearer',  # 文档要求
-                'expires_in': 3600,  # 文档要求：过期时间1小时
+                'token_type': 'Bearer',
+                'expires_in': 3600,
                 'user_info': {
                     'user_id': user['user_id'],
                     'username': user['username'],
@@ -304,6 +294,7 @@ def login():
             'error_detail': str(e)
         }), 500
 
+
 # 3. 获取用户信息接口
 @app.get('/api/v1/users/<int:user_id>')
 @token_required
@@ -317,7 +308,7 @@ def get_user(decoded, user_id):
             'message': '用户不存在'
         }), 404
 
-    # 检查权限：只能访问自己的信息或管理员访问所有
+    # 检查权限
     if decoded['user_id'] != user_id and decoded['role'] != 'admin':
         return jsonify({
             'code': 40008,
@@ -361,7 +352,7 @@ def update_user(decoded, user_id):
             'message': '用户不存在'
         }), 404
 
-    # 检查权限：只能更新自己的信息或管理员更新所有
+    # 检查权限
     if decoded['user_id'] != user_id and decoded['role'] != 'admin':
         return jsonify({
             'code': 40008,
@@ -391,7 +382,7 @@ def update_user(decoded, user_id):
     if avatar is not None:
         user['avatar'] = avatar
     if password is not None:
-        user['password'] = password  # 实际应用中应该加密
+        user['password'] = password
     user['update_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     # 保存更新
@@ -413,7 +404,7 @@ def update_user(decoded, user_id):
 @app.delete('/api/v1/users/<int:user_id>')
 @token_required
 def delete_user(decoded, user_id):
-    reason = request.args.get('reason')  # 删除原因，可选
+    reason = request.args.get('reason')
 
     users = get_users()
     user_index = next((i for i, u in enumerate(users) if u['user_id'] == user_id), None)
@@ -426,7 +417,7 @@ def delete_user(decoded, user_id):
 
     user = users[user_index]
 
-    # 检查权限：只能删除自己的信息或管理员删除非管理员用户
+    # 检查权限
     if not (
         (decoded['role'] == 'admin' and user['role'] != 'admin') or
         (decoded['user_id'] == user_id and decoded['role'] == 'user')
@@ -455,14 +446,10 @@ def delete_user(decoded, user_id):
     }), 200
 
 
-# 6.管理员专用：创建用户接口（支持创建管理员）
+# 6. 管理员专用：创建用户接口
 @app.post('/api/v1/admin/users/create')
 @token_required
 def create_admin_user(decoded):
-    """
-    管理员专用接口，用于创建指定角色的用户账号（包括管理员）
-    权限要求：仅管理员可访问
-    """
     # 检查是否为管理员
     if decoded['role'] != 'admin':
         return jsonify({
@@ -476,7 +463,7 @@ def create_admin_user(decoded):
     password = data.get('password')
     email = data.get('email')
     phone = data.get('phone', '')
-    role = data.get('role', 'user')  # 默认角色为 user
+    role = data.get('role', 'user')
 
     users = get_users()
 
@@ -555,6 +542,7 @@ def create_admin_user(decoded):
             'create_time': new_user['create_time']
         }
     }), 200
+
 
 if __name__ == '__main__':
     init_data()
