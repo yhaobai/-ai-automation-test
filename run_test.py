@@ -78,24 +78,30 @@ def start_temp_server(report_html_path):
 
 def run_tests(config):
     """执行测试并生成报告"""
-    # 执行测试，输出到根目录的 allure-results（与workflow匹配）
-    allure_results_path = os.path.join(os.getcwd(), 'allure-results')  # 根目录路径
-    os.makedirs(allure_results_path, exist_ok=True)  # 确保目录存在
-    pytest_args = [
-        'tests/',
-        f'--alluredir={allure_results_path}',  # 根目录下的 allure-results
-        '-v',
-        '-s'
-    ]
-    exit_code = pytest.main(pytest_args)
-    
-    # 生成报告（可选：仍可输出到带时间戳的目录，但结果目录已与workflow对齐）
+    # 创建带时间戳的报告目录
     report_dir = config.get('report', 'directory', fallback='reports')
     os.makedirs(report_dir, exist_ok=True)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     report_path = os.path.join(report_dir, f'report_{timestamp}')
     os.makedirs(report_path, exist_ok=True)
-    allure_report_dir = generate_allure_report(report_path)  # 保持原有报告生成逻辑
+    
+    # 测试结果输出到报告目录下的 allure-results（与报告生成路径一致）
+    allure_results_path = os.path.join(report_path, 'allure-results')
+    os.makedirs(allure_results_path, exist_ok=True)
+    
+    # 执行测试
+    pytest_args = [
+        'tests/',
+        f'--alluredir={allure_results_path}',  # 输出到带时间戳的目录
+        '-v',
+        '-s'
+    ]
+    exit_code = pytest.main(pytest_args)
+    
+    # 生成报告（路径已对齐）
+    allure_report_dir = generate_allure_report(report_path)
+    
+    # 其他代码保持不变...
     
     # 生成在线访问链接
     report_url = None
