@@ -66,7 +66,7 @@ def run_tests(config):
     # 执行测试
     pytest_args = [
         'tests/',
-        '--alluredir=allure-results',
+        f'--alluredir={allure_results_path}', 
         '-v',
         '-s'
     ]
