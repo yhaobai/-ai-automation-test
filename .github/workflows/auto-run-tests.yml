@@ -201,6 +201,24 @@ jobs:
           # 使用前面保存的最新报告路径
           allure generate "$LATEST_REPORT/allure-results" -o "$LATEST_REPORT/allure-report" --clean
           echo "✅ Allure报告生成成功: $LATEST_REPORT/allure-report"
+          # 复制报告到根目录public文件夹（方便GitHub Pages部署）
+          mkdir -p ./public
+          cp -r "$LATEST_REPORT/allure-report"/* ./public/
+        shell: bash
+
+      - name: Deploy report to GitHub Pages
+        if: github.ref == 'refs/heads/master'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          force_orphan: true
+
+      - name: Generate public report URL
+        id: report_url
+        run: |
+          # 生成GitHub Pages公网访问链接
+          echo "::set-output name=url::https://${{ github.repository_owner }}.github.io/${{ github.repository }}/index.html"
         shell: bash
 
       - name: Upload test results and logs
@@ -236,11 +254,23 @@ jobs:
           fi
         shell: bash
       
-      - name: Notify failure
-        if: failure() && github.ref == 'refs/heads/master'
+      - name: Send DingTalk notification
+        if: github.ref == 'refs/heads/master'
         uses: 8398a7/action-slack@v3
         with:
           status: ${{ job.status }}
           fields: repo,message,commit,author,action,eventName,ref,workflow
+          custom_payload: |
+            {
+              "msgtype": "markdown",
+              "markdown": {
+                "title": "📊 自动化测试报告",
+                "text": "#### 测试结果: ${{ job.status == 'success' && '✅ 成功' || '❌ 失败' }}\n" +
+                        "- 提交作者: ${{ github.actor }}\n" +
+                        "- 提交信息: ${{ github.event.head_commit.message }}\n" +
+                        "- 执行时间: ${{ format('{0:YYYY-MM-DD HH:mm:ss}', github.event.head_commit.timestamp) }}\n" +
+                        "- 查看报告: [点击访问](${{ steps.report_url.outputs.url }})"
+              }
+            }
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.DINGTALK_WEBHOOK }}
