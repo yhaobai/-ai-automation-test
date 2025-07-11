@@ -45,57 +45,76 @@ jobs:
           }
         shell: pwsh
       
-      - name: Check port 3000 availability
-        run: |
-          $portInUse = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
-          if ($portInUse) {
-              Write-Error "❌ Port 3000 is in use by PID $($portInUse.OwningProcess)"
-              exit 1
-          }
-          Write-Host "✅ Port 3000 is available"
-        shell: pwsh
-      
       - name: Start mock server (foreground mode)
         run: |
           $logPath = "mock_server_combined.log"
-          # 启动进程并捕获 PID（使用自定义变量名避免冲突）
-          $process = Start-Process -FilePath "python" -ArgumentList "api/mock_server.py" -PassThru -NoNewWindow -RedirectStandardOutput "stdout.tmp" -RedirectStandardError "stderr.tmp"
-          $processId = $process.Id  # 替换只读变量 $pid 为 $processId
+          $errorActionPreference = "Stop"  # 遇到错误立即终止流程
+          $stdoutPath = "stdout.tmp"
+          $stderrPath = "stderr.tmp"
+      
+          # 启动进程并捕获详细信息（含重定向输出）
+          $process = Start-Process -FilePath "python" `
+            -ArgumentList "api/mock_server.py" `
+            -PassThru `
+            -NoNewWindow `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+          
+          $processId = $process.Id
           Write-Host "Mock server started with PID: $processId"
-
-          # 合并输出到日志文件并实时显示（解决重定向冲突）
-          Get-Content "stdout.tmp", "stderr.tmp" -Wait | Tee-Object -FilePath $logPath -Append &
-
-          # 检查进程是否启动成功
-          if (-not $processId) {
-              Write-Error "❌ Mock server failed to start"
-              Get-Content $logPath -Raw
+      
+          # 实时合并输出到日志（单独开线程避免阻塞）
+          $logTask = Start-Job -ScriptBlock {
+            param($stdout, $stderr, $log)
+            Get-Content $stdout, $stderr -Wait | 
+              Tee-Object -FilePath $log -Append
+          } -ArgumentList $stdoutPath, $stderrPath, $logPath
+      
+          # 检查进程是否启动成功（启动后立即检查状态）
+          Start-Sleep -Seconds 1  # 等待进程初始化
+          if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
+              Write-Error "❌ Mock server failed to start (进程未启动)"
+              Get-Content $stdoutPath, $stderrPath -Raw | Write-Error
+              Stop-Job $logTask
               exit 1
           }
-          
-          # 等待服务启动（最多60秒，每3秒检查一次）
+      
+          # 等待服务监听端口（最多60秒，每3秒检查一次）
           $maxRetries = 20
           $retryCount = 0
           $portOpen = $false
           while ($retryCount -lt $maxRetries -and -not $portOpen) {
               Start-Sleep -Seconds 3
               $retryCount++
-              $portOpen = [bool](Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)
-              Write-Host "Waiting for mock server... Attempt $retryCount/$maxRetries"
               
-              # 检查进程是否已崩溃
+              # 更全面的端口检查（同时检查 LISTEN 和 ESTABLISHED）
+              $portState = Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
+              $portOpen = $portState.Count -gt 0 -and 
+                          ($portState.State -contains "Listen" -or 
+                           $portState.State -contains "Established")
+              
+              Write-Host "Waiting for mock server... Attempt $retryCount/$maxRetries"
+      
+              # 检查进程是否崩溃
               if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
                   Write-Error "❌ Mock server process crashed (PID: $processId)"
-                  Get-Content $logPath -Raw
+                  Get-Content $stdoutPath, $stderrPath -Raw | Write-Error
+                  Stop-Job $logTask
                   exit 1
               }
           }
-          
+      
+          # 清理后台日志任务
+          Stop-Job $logTask
+          Remove-Item -Path $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+      
+          # 最终端口检查
           if (-not $portOpen) {
-              Write-Error "❌ Mock server failed to listen on port 3000"
-              Get-Content $logPath -Raw
+              Write-Error "❌ Mock server failed to listen on port 3000 after $maxRetries retries"
+              Get-Content $logPath -Raw | Write-Error
               exit 1
           }
+          
           Write-Host "✅ Mock server is running on port 3000"
         shell: pwsh
         timeout-minutes: 10
