@@ -48,9 +48,9 @@ def init_data():
                 "status": 1
             }
         ]
-       with open(USERS_FILE, 'w', encoding='utf-8') as f:
+        # 修复缩进：与 initial_users 保持同一层级（缩进量相同）
+        with open(USERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(initial_users, f, indent=2, ensure_ascii=False)
-
 
 # 读取用户数据
 def get_users():
