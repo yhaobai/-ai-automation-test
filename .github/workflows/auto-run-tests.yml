@@ -131,7 +131,7 @@ jobs:
                   
                   # 检查进程是否崩溃
                   if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
-                      Write-Error "❌ Mock server process crashed (PID: $processId)" -ForegroundColor Red
+                      Write-Error "Failed to start mock server"
                       Get-Content $stdoutPath, $stderrPath -Raw | Write-Error
                       throw "Mock server process crashed"
                   }
